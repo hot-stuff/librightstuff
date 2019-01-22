@@ -165,48 +165,88 @@ class HotStuffCore {
     void set_neg_vote(bool _neg_vote) { neg_vote = _neg_vote; }
 };
 
+// TODO: optimize the repr of Status
+using status_cert_t = std::vector<Notify>;
+
+static void get_vote_proof_text_hash(const uint256_t &blk_hash) {
+    DataStream p;
+    p << ProofType::VOTE << blk_hash;
+    return p.get_hash();
+}
+
+static void get_blame_proof_text_hash(const uint256_t &blk_hash) {
+    DataStream p;
+    p << ProofType::BLAME << blk_hash;
+    return p.get_hash();
+}
+
+enum ProofType {
+    VOTE = 0x0,
+    BLAME = 0x1
+};
+
 /** Abstraction for proposal messages. */
 struct Proposal: public Serializable {
     ReplicaID proposer;
-    /** hash for the block containing the highest QC */
-    uint256_t bqc_hash;
     /** block being proposed */
     block_t blk;
+    /** the cert for blk.parent; unused, for the future protocol */
+    quorum_cert_bt cert_pblk;
+    /** optional status messages (S) */
+    status_cert_t status;
 
     /** handle of the core object to allow polymorphism. The user should use
      * a pointer to the object of the class derived from HotStuffCore */
     HotStuffCore *hsc;
 
-    Proposal(): blk(nullptr), hsc(nullptr) {}
+    Proposal(): blk(nullptr), cert_pblk(nullptr), hsc(nullptr) {}
     Proposal(ReplicaID proposer,
-            const uint256_t &bqc_hash,
             const block_t &blk,
+            quorum_cert_bt &&cert_pblk,
+            status_cert_t &&status,
             HotStuffCore *hsc):
         proposer(proposer),
-        bqc_hash(bqc_hash),
-        blk(blk), hsc(hsc) {}
+        blk(blk), cert_pblk(std::move(cert_pblk)),
+        status(std::move(status))
+        hsc(hsc) {}
 
     void serialize(DataStream &s) const override {
         s << proposer
-          << bqc_hash
-          << *blk;
+          << *blk << *cert_pblk;
+        if (status == nullptr)
+            s << (uint32_t)0;
+        else
+        {
+            assert(status->size() > 0);
+            s << (uint32_t)status->size();
+            for (const auto &i: *status)
+                s << i;
+        }
     }
 
     void unserialize(DataStream &s) override {
         assert(hsc != nullptr);
-        s >> proposer
-          >> bqc_hash;
+        uint8_t nstatus;
+        s >> proposer;
         Block _blk;
         _blk.unserialize(s, hsc);
         blk = hsc->storage->add_blk(std::move(_blk), hsc->get_config());
+        hsc->parse_part_cert(s);
+        s >> nstatus;
+        if (nstatus)
+        {
+            status.resize(nstatus);
+            for (uint32_t i = 0; i < nstatus; i++)
+                s >> status[i];
+        }
     }
 
     operator std::string () const {
         DataStream s;
         s << "<proposal "
           << "rid=" << std::to_string(proposer) << " "
-          << "bqc=" << get_hex10(bqc_hash) << " "
-          << "blk=" << get_hex10(blk->get_hash()) << ">";
+          << "blk=" << get_hex10(blk->get_hash()) << " "
+          << "status=" << status ? "yes" : "no" << ">";
         return std::move(s);
     }
 };
@@ -214,8 +254,6 @@ struct Proposal: public Serializable {
 /** Abstraction for vote messages. */
 struct Vote: public Serializable {
     ReplicaID voter;
-    /** hash for the block containing the highest QC */
-    uint256_t bqc_hash;
     /** block being voted */
     uint256_t blk_hash;
     /** proof of validity for the vote (nullptr for a negative vote) */
@@ -226,54 +264,41 @@ struct Vote: public Serializable {
 
     Vote(): cert(nullptr), hsc(nullptr) {}
     Vote(ReplicaID voter,
-        const uint256_t &bqc_hash,
         const uint256_t &blk_hash,
         part_cert_bt &&cert,
         HotStuffCore *hsc):
         voter(voter),
-        bqc_hash(bqc_hash),
         blk_hash(blk_hash),
         cert(std::move(cert)), hsc(hsc) {}
 
     Vote(const Vote &other):
         voter(other.voter),
-        bqc_hash(other.bqc_hash),
         blk_hash(other.blk_hash),
-        cert(other.cert ? other.cert->clone() : nullptr),
+        cert(other.cert->clone()),
         hsc(other.hsc) {}
 
     Vote(Vote &&other) = default;
     
     void serialize(DataStream &s) const override {
-        s << voter
-          << bqc_hash
-          << blk_hash;
-        if (cert == nullptr)
-            s << (uint8_t)0;
-        else
-            s << (uint8_t)1 << *cert;
+        s << voter << blk_hash << *cert;
     }
 
     void unserialize(DataStream &s) override {
         assert(hsc != nullptr);
-        uint8_t has_cert;
-        s >> voter
-          >> bqc_hash
-          >> blk_hash
-          >> has_cert;
-        cert = has_cert ? hsc->parse_part_cert(s) : nullptr;
+        s >> voter >> blk_hash;
+        cert = hsc->parse_part_cert(s);
     }
 
     bool verify() const {
         assert(hsc != nullptr);
         return cert->verify(hsc->get_config().get_pubkey(voter)) &&
-                cert->get_blk_hash() == blk_hash;
+                cert->get_blk_hash() == get_vote_proof_text_hash(blk_hash);
     }
 
     promise_t verify(VeriPool &vpool) const {
         assert(hsc != nullptr);
         return cert->verify(hsc->get_config().get_pubkey(voter), vpool).then([this](bool result) {
-            return result && cert->get_blk_hash() == blk_hash;
+            return result && cert->get_blk_hash() == get_vote_proof_text_hash(blk_hash);
         });
     }
 
@@ -281,12 +306,115 @@ struct Vote: public Serializable {
         DataStream s;
         s << "<vote "
           << "rid=" << std::to_string(voter) << " "
-          << "bqc=" << get_hex10(bqc_hash) << " "
-          << "blk=" << get_hex10(blk_hash) << " "
-          << "cert=" << (cert ? "yes" : "no") << ">";
+          << "blk=" << get_hex10(blk_hash) << ">";
         return std::move(s);
     }
 };
+
+struct Notify: public Serializable {
+    quorum_cert_bt qc;
+    uint256_t blk_hash;
+    
+    /** handle of the core object to allow polymorphism */
+    HotStuffCore *hsc;
+
+    Notify(): qc(nullptr), hsc(nullptr) {}
+    Notify(quorum_cert_bt &&qc,
+        HotStuffCore *hsc):
+        qc(std::move(qc)), hsc(hsc) {}
+
+    Notify(const Vote &other):
+        qc(qc->clone()),
+        hsc(other.hsc) {}
+
+    Notify(Notify &&other) = default;
+    
+    void serialize(DataStream &s) const override {
+        s << *qc;
+    }
+
+    void unserialize(DataStream &s) override {
+        qc = hsc->parse_quorum_cert(s);
+    }
+
+    bool verify() const {
+        assert(hsc != nullptr);
+        return qc->verify(hsc->get_config()) &&
+            qc->get_blk_hash() == get_vote_proof_text_hash(blk_hash);
+    }
+
+    promise_t verify(VeriPool &vpool) const {
+        assert(hsc != nullptr);
+        return qc->verify(hsc->get_config(), vpool).then([this](bool result) {
+            return result && qc->get_blk_hash() == get_vote_proof_text_hash(blk_hash);
+        });
+    }
+
+    operator std::string () const {
+        DataStream s;
+        s << "<notify "
+          << "blk=" << get_hex10(blk_hash) << ">";
+        return std::move(s);
+    }
+};
+
+struct Blame: public Serializable {
+    ReplicaID blamer;
+    uint256_t blk_hash;
+    part_cert_bt cert;
+    
+    /** handle of the core object to allow polymorphism */
+    HotStuffCore *hsc;
+
+    Blame(): cert(nullptr), hsc(nullptr) {}
+    Blame(ReplicaID voter,
+        const uint256_t &blk_hash,
+        part_cert_bt &&cert,
+        HotStuffCore *hsc):
+        blamer(blamer),
+        blk_hash(blk_hash),
+        cert(std::move(cert)), hsc(hsc) {}
+
+    Blame(const Vote &other):
+        blamer(other.blamer),
+        blk_hash(other.blk_hash),
+        cert(other.cert->clone()),
+        hsc(other.hsc) {}
+
+    Blame(Blame &&other) = default;
+    
+    void serialize(DataStream &s) const override {
+        s << blamer << blk_hash << *cert;
+    }
+
+    void unserialize(DataStream &s) override {
+        assert(hsc != nullptr);
+        s >> blamer >> blk_hash;
+        cert = hsc->parse_part_cert(s);
+    }
+
+    bool verify() const {
+        assert(hsc != nullptr);
+        return cert->verify(hsc->get_config().get_pubkey(blamer)) &&
+                cert->get_blk_hash() == get_blame_proof_text_hash(blk_hash);
+    }
+
+    promise_t verify(VeriPool &vpool) const {
+        assert(hsc != nullptr);
+        return cert->verify(hsc->get_config().get_pubkey(blamer), vpool).then([this](bool result) {
+            return result && cert->get_blk_hash() == get_blame_proof_text_hash(blk_hash);
+        });
+    }
+
+    operator std::string () const {
+        DataStream s;
+        s << "<blame "
+          << "rid=" << std::to_string(blamer) << " "
+          << "blk=" << get_hex10(blk_hash) << ">";
+        return std::move(s);
+    }
+};
+
 
 struct Finality: public Serializable {
     ReplicaID rid;
