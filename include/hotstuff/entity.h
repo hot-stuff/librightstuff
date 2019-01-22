@@ -121,13 +121,11 @@ class Block {
     friend HotStuffCore;
     std::vector<uint256_t> parent_hashes;
     std::vector<uint256_t> cmds;
-    quorum_cert_bt qc;
     bytearray_t extra;
 
     /* the following fields can be derived from above */
     uint256_t hash;
     std::vector<block_t> parents;
-    block_t qc_ref;
     quorum_cert_bt self_qc;
     uint32_t height;
     bool delivered;
@@ -137,33 +135,25 @@ class Block {
 
     public:
     Block():
-        qc(nullptr),
-        qc_ref(nullptr),
         self_qc(nullptr), height(0),
         delivered(false), decision(0) {}
 
     Block(bool delivered, int8_t decision):
-        qc(nullptr),
         hash(salticidae::get_hash(*this)),
-        qc_ref(nullptr),
         self_qc(nullptr), height(0),
         delivered(delivered), decision(decision) {}
 
     Block(const std::vector<block_t> &parents,
         const std::vector<uint256_t> &cmds,
-        quorum_cert_bt &&qc,
         bytearray_t &&extra,
         uint32_t height,
-        const block_t &qc_ref,
         quorum_cert_bt &&self_qc,
         int8_t decision = 0):
             parent_hashes(get_hashes(parents)),
             cmds(cmds),
-            qc(std::move(qc)),
             extra(std::move(extra)),
             hash(salticidae::get_hash(*this)),
             parents(parents),
-            qc_ref(qc_ref),
             self_qc(std::move(self_qc)),
             height(height),
             delivered(0),
@@ -205,8 +195,6 @@ class Block {
 
     const quorum_cert_bt &get_qc() const { return qc; }
 
-    const block_t &get_qc_ref() const { return qc_ref; }
-
     const bytearray_t &get_extra() const { return extra; }
 
     operator std::string () const {
@@ -215,7 +203,7 @@ class Block {
           << "id="  << get_hex10(hash) << " "
           << "height=" << std::to_string(height) << " "
           << "parent=" << get_hex10(parent_hashes[0]) << " "
-          << "qc_ref=" << (qc_ref ? get_hex10(qc_ref->get_hash()) : "null") << ">";
+          << ">";
         return std::move(s);
     }
 };

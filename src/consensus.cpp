@@ -42,7 +42,6 @@ HotStuffCore::HotStuffCore(ReplicaID id,
         id(id),
         storage(new EntityStorage()) {
     storage->add_blk(b0);
-    b0->qc_ref = b0;
 }
 
 void HotStuffCore::sanity_check_delivered(const block_t &blk) {
@@ -68,14 +67,6 @@ bool HotStuffCore::on_deliver_blk(const block_t &blk) {
         blk->parents.push_back(get_delivered_blk(hash));
     blk->height = blk->parents[0]->height + 1;
 
-    if (blk->qc)
-    {
-        block_t _blk = storage->find_blk(blk->qc->get_blk_hash());
-        if (_blk == nullptr)
-            throw std::runtime_error("block referred by qc not fetched");
-        blk->qc_ref = std::move(_blk);
-    } // otherwise blk->qc_ref remains null
-
     for (auto pblk: blk->parents) tails.erase(pblk);
     tails.insert(blk);
 
@@ -85,17 +76,7 @@ bool HotStuffCore::on_deliver_blk(const block_t &blk) {
 }
 
 void HotStuffCore::check_commit(const block_t &_blk) {
-    const block_t &blk = _blk->qc_ref;
-    if (blk->qc_ref == nullptr) return;
-    /* decided blk could possible be incomplete due to pruning */
-    if (blk->decision) return;
-    block_t p = blk->parents[0];
-    if (p->decision) return;
-    /* commit requires direct parent */
-    if (p != blk->qc_ref) return;
-    /* otherwise commit */
-    std::vector<block_t> commit_queue;
-    block_t b;
+    // XXX
     for (b = p; b->height > bexec->height; b = b->parents[0])
     { /* TODO: also commit the uncles/aunts */
         commit_queue.push_back(b);
@@ -119,13 +100,8 @@ void HotStuffCore::check_commit(const block_t &_blk) {
 
 bool HotStuffCore::update(const uint256_t &bqc_hash) {
     block_t _bqc = get_delivered_blk(bqc_hash);
-    if (_bqc->qc_ref == nullptr) return false;
-    check_commit(_bqc);
-    if (_bqc->qc_ref->height > bqc->qc_ref->height)
-    {
+    if (_bqc->height > bqc->height)
         bqc = _bqc;
-        on_bqc_update();
-    }
     return true;
 }
 

@@ -98,6 +98,10 @@ class HotStuffCore {
      * The block mentioned in the message should be already delivered. */
     void on_receive_vote(const Vote &vote);
 
+    void on_receive_notify(const Notify &notify);
+
+    void on_receive_blame(const Blame &blame);
+
     /** Call to submit new commands to be decided (executed). "Parents" must
      * contain at least one block, and the first block is the actual parent,
      * while the others are uncles/aunts */
@@ -256,7 +260,7 @@ struct Vote: public Serializable {
     ReplicaID voter;
     /** block being voted */
     uint256_t blk_hash;
-    /** proof of validity for the vote (nullptr for a negative vote) */
+    /** proof of validity for the vote */
     part_cert_bt cert;
     
     /** handle of the core object to allow polymorphism */
@@ -312,28 +316,31 @@ struct Vote: public Serializable {
 };
 
 struct Notify: public Serializable {
-    quorum_cert_bt qc;
     uint256_t blk_hash;
+    quorum_cert_bt qc;
     
     /** handle of the core object to allow polymorphism */
     HotStuffCore *hsc;
 
     Notify(): qc(nullptr), hsc(nullptr) {}
-    Notify(quorum_cert_bt &&qc,
+    Notify(const uint256_t blk_hash,
+        quorum_cert_bt &&qc,
         HotStuffCore *hsc):
+        blk_hash(blk_hash),
         qc(std::move(qc)), hsc(hsc) {}
 
     Notify(const Vote &other):
-        qc(qc->clone()),
-        hsc(other.hsc) {}
+        blk_hash(blk_hash),
+        qc(qc->clone()), hsc(other.hsc) {}
 
     Notify(Notify &&other) = default;
     
     void serialize(DataStream &s) const override {
-        s << *qc;
+        s << blk_hash << *qc;
     }
 
     void unserialize(DataStream &s) override {
+        s >> blk_hash;
         qc = hsc->parse_quorum_cert(s);
     }
 
@@ -367,7 +374,7 @@ struct Blame: public Serializable {
     HotStuffCore *hsc;
 
     Blame(): cert(nullptr), hsc(nullptr) {}
-    Blame(ReplicaID voter,
+    Blame(ReplicaID blamer,
         const uint256_t &blk_hash,
         part_cert_bt &&cert,
         HotStuffCore *hsc):
