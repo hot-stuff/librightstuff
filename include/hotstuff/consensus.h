@@ -31,6 +31,8 @@ namespace hotstuff {
 
 struct Proposal;
 struct Vote;
+struct Notify;
+struct Blame;
 struct Finality;
 
 /** Abstraction for HotStuff protocol state machine (without network implementation). */
@@ -41,6 +43,8 @@ class HotStuffCore {
     block_t bqc;
     block_t bexec;                            /**< last executed block */
     uint32_t vheight;          /**< height of the block last voted for */
+    status_cert_t status_cert; /**< status certificate */
+
     /* === auxilliary variables === */
     privkey_bt priv_key;            /**< private key for signing votes */
     std::set<block_t, BlockHeightCmp> tails;   /**< set of tail blocks */
@@ -79,7 +83,7 @@ class HotStuffCore {
 
     /** Call to initialize the protocol, should be called once before all other
      * functions. */
-    void on_init(uint32_t nfaulty) { config.nmajority = 2 * nfaulty + 1; }
+    void on_init(uint32_t nfaulty) { config.nmajority = nfaulty + 1; }
 
     /* TODO: better name for "delivery" ? */
     /** Call to inform the state machine that a block is ready to be handled.
@@ -122,10 +126,9 @@ class HotStuffCore {
      * The user should send the proposal message to all replicas except for
      * itself. */
     virtual void do_broadcast_proposal(const Proposal &prop) = 0;
-    /** Called upon sending out a new vote to the next proposer.  The user
-     * should send the vote message to a *good* proposer to have good liveness,
-     * while safety is always guaranteed by HotStuffCore. */
-    virtual void do_vote(ReplicaID last_proposer, const Vote &vote) = 0;
+    virtual void do_broadcast_vote(const Vote &vote) = 0;
+    virtual void do_broadcast_notify(const Notify &notify) = 0;
+    virtual void do_broadcast_blame(const Blame &blame) = 0;
 
     /* The user plugs in the detailed instances for those
      * polymorphic data types. */
@@ -172,13 +175,13 @@ class HotStuffCore {
 // TODO: optimize the repr of Status
 using status_cert_t = std::vector<Notify>;
 
-static void get_vote_proof_text_hash(const uint256_t &blk_hash) {
+void get_vote_proof_text_hash(const uint256_t &blk_hash) {
     DataStream p;
     p << ProofType::VOTE << blk_hash;
     return p.get_hash();
 }
 
-static void get_blame_proof_text_hash(const uint256_t &blk_hash) {
+void get_blame_proof_text_hash(const uint256_t &blk_hash) {
     DataStream p;
     p << ProofType::BLAME << blk_hash;
     return p.get_hash();

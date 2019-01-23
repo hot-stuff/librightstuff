@@ -34,10 +34,24 @@ void MsgPropose::postponed_parse(HotStuffCore *hsc) {
 }
 
 const opcode_t MsgVote::opcode;
-MsgVote::MsgVote(const Vote &vote) { serialized << vote; }
+MsgVote::MsgVote(const Vote &inner) { serialized << inner; }
 void MsgVote::postponed_parse(HotStuffCore *hsc) {
-    vote.hsc = hsc;
-    serialized >> vote;
+    inner.hsc = hsc;
+    serialized >> inner;
+}
+
+const opcode_t MsgNotify::opcode;
+MsgNotify::MsgNotify(const Notify &inner) { serialized << inner; }
+void MsgNotify::postponed_parse(HotStuffCore *hsc) {
+    inner.hsc = hsc;
+    serialized >> inner;
+}
+
+const opcode_t MsgBlame::opcode;
+MsgBlame::MsgBlame(const Blame &inner) { serialized << inner; }
+void MsgBlame::postponed_parse(HotStuffCore *hsc) {
+    inner.hsc = hsc;
+    serialized >> inner;
 }
 
 const opcode_t MsgReqBlock::opcode;
@@ -255,26 +269,6 @@ void HotStuffBase::propose_handler(MsgPropose &&msg, const Net::conn_t &conn) {
     });
 }
 
-void HotStuffBase::vote_handler(MsgVote &&msg, const Net::conn_t &conn) {
-    const NetAddr &peer = conn->get_peer();
-    msg.postponed_parse(this);
-    //auto &vote = msg.vote;
-    RcObj<Vote> v(new Vote(std::move(msg.vote)));
-    promise::all(std::vector<promise_t>{
-        async_deliver_blk(v->bqc_hash, peer),
-        async_deliver_blk(v->blk_hash, peer)
-    }).then([this, v=std::move(v)]() {
-        //bool result = vote->verify();
-        auto pm = v->verify(vpool);
-        pm.then([this, v=std::move(v)](bool result) {
-        if (!result)
-            LOG_WARN("invalid vote from %d", v->voter);
-        else
-            on_receive_vote(*v);
-        });
-    });
-}
-
 void HotStuffBase::req_blk_handler(MsgReqBlock &&msg, const Net::conn_t &conn) {
     const NetAddr replica = conn->get_peer();
     auto &blk_hashes = msg.blk_hashes;
@@ -388,29 +382,12 @@ HotStuffBase::HotStuffBase(uint32_t blk_size,
     /* register the handlers for msg from replicas */
     pn.reg_handler(salticidae::generic_bind(&HotStuffBase::propose_handler, this, _1, _2));
     pn.reg_handler(salticidae::generic_bind(&HotStuffBase::vote_handler, this, _1, _2));
+    pn.reg_handler(salticidae::generic_bind(&HotStuffBase::notify_handler, this, _1, _2));
+    pn.reg_handler(salticidae::generic_bind(&HotStuffBase::blame_handler, this, _1, _2));
     pn.reg_handler(salticidae::generic_bind(&HotStuffBase::req_blk_handler, this, _1, _2));
     pn.reg_handler(salticidae::generic_bind(&HotStuffBase::resp_blk_handler, this, _1, _2));
     pn.start();
     pn.listen(listen_addr);
-}
-
-void HotStuffBase::do_broadcast_proposal(const Proposal &prop) {
-    MsgPropose prop_msg(prop);
-    for (const auto &replica: peers)
-        pn.send_msg(prop_msg, replica);
-}
-
-void HotStuffBase::do_vote(ReplicaID last_proposer, const Vote &vote) {
-    pmaker->beat_resp(last_proposer)
-            .then([this, vote](ReplicaID proposer) {
-        if (proposer == get_id())
-        {
-            throw HotStuffError("unreachable line");
-            //on_receive_vote(vote);
-        }
-        else
-            pn.send_msg(MsgVote(vote), get_config().get_addr(proposer));
-    });
 }
 
 void HotStuffBase::do_decide(Finality &&fin) {
@@ -427,8 +404,8 @@ void HotStuffBase::do_decide(Finality &&fin) {
 HotStuffBase::~HotStuffBase() {}
 
 void HotStuffBase::start(bool ec_loop) {
-    /* ((n - 1) + 1 - 1) / 3 */
-    uint32_t nfaulty = peers.size() / 3;
+    /* ((n - 1) + 1 - 1) / 2 */
+    uint32_t nfaulty = peers.size() / 2;
     if (nfaulty == 0)
         LOG_WARN("too few replicas in the system to tolerate any failure");
     on_init(nfaulty);
