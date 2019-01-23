@@ -77,32 +77,35 @@ bool HotStuffCore::on_deliver_blk(const block_t &blk) {
 
 void HotStuffCore::check_commit(const block_t &_blk) {
     // XXX
-    for (b = p; b->height > bexec->height; b = b->parents[0])
-    { /* TODO: also commit the uncles/aunts */
-        commit_queue.push_back(b);
-    }
-    if (b != bexec)
-        throw std::runtime_error("safety breached :( " +
-                                std::string(*p) + " " +
-                                std::string(*bexec));
-    for (auto it = commit_queue.rbegin(); it != commit_queue.rend(); it++)
-    {
-        const block_t &blk = *it;
-        blk->decision = 1;
-        LOG_PROTO("commit %s", std::string(*blk).c_str());
-        size_t idx = 0;
-        for (auto cmd: blk->cmds)
-            do_decide(Finality(id, 1, idx, blk->height,
-                                cmd, blk->get_hash()));
-    }
-    bexec = p;
+    //for (b = p; b->height > bexec->height; b = b->parents[0])
+    //{ /* TODO: also commit the uncles/aunts */
+    //    commit_queue.push_back(b);
+    //}
+    //if (b != bexec)
+    //    throw std::runtime_error("safety breached :( " +
+    //                            std::string(*p) + " " +
+    //                            std::string(*bexec));
+    //for (auto it = commit_queue.rbegin(); it != commit_queue.rend(); it++)
+    //{
+    //    const block_t &blk = *it;
+    //    blk->decision = 1;
+    //    LOG_PROTO("commit %s", std::string(*blk).c_str());
+    //    size_t idx = 0;
+    //    for (auto cmd: blk->cmds)
+    //        do_decide(Finality(id, 1, idx, blk->height,
+    //                            cmd, blk->get_hash()));
+    //}
+    //bexec = p;
 }
 
 // TODO: the following two look okay, but needs some scrutiny
 
 bool HotStuffCore::update(const block_t blk) {
     if (blk->height > bqc->height)
+    {
         bqc = blk;
+        on_bqc_update();
+    }
     return true;
 }
 
@@ -124,9 +127,9 @@ void HotStuffCore::on_propose(const std::vector<uint256_t> &cmds,
     bnew->self_qc = create_quorum_cert(bnew_hash);
     on_deliver_blk(bnew);
     assert(p->voted.size() >= config.nmajority);
-    status_cert_t sc == nullptr;
+    status_cert_t sc = nullptr;
     std::swap(sc, status_cert);
-    Proposal prop(id, bnew, p->self_qc.clone(), std::move(sc), nullptr);
+    Proposal prop(id, bnew, p->self_qc->clone(), std::move(sc), nullptr);
     LOG_PROTO("propose %s", std::string(*bnew).c_str());
     /* self-vote */
     if (bnew->height <= vheight)
@@ -134,7 +137,7 @@ void HotStuffCore::on_propose(const std::vector<uint256_t> &cmds,
     vheight = bnew->height;
     on_receive_vote(
         Vote(id, bnew_hash,
-            create_part_cert(*priv_key, get_vote_proof_text_hash(bnew_hash)), this));
+            create_part_cert(*priv_key, Vote::proof_text_hash(bnew_hash)), this));
     on_propose_(prop);
     /* boradcast to other replicas */
     do_broadcast_proposal(prop);
@@ -145,12 +148,12 @@ void HotStuffCore::on_receive_proposal(const Proposal &prop) {
     block_t bnew = prop.blk;
     sanity_check_delivered(bnew);
     on_receive_proposal_(prop);
-    do_vote(prop.proposer,
+    do_broadcast_vote(
         Vote(id,
             bnew->get_hash(),
             create_part_cert(
                 *priv_key,
-                get_vote_proof_text_hash(bnew->get_hash())),
+                Vote::proof_text_hash(bnew->get_hash())),
             this));
 }
 
@@ -183,6 +186,15 @@ void HotStuffCore::on_receive_vote(const Vote &vote) {
     }
 }
 
+void HotStuffCore::on_receive_notify(const Notify &notify) {
+}
+
+void HotStuffCore::on_receive_blame(const Blame &blame) {
+}
+
+void HotStuffCore::on_receive_blamenotify(const BlameNotify &bn) {
+}
+
 /*** end HotStuff protocol logic ***/
 
 void HotStuffCore::prune(uint32_t staleness) {
@@ -191,7 +203,6 @@ void HotStuffCore::prune(uint32_t staleness) {
     for (start = bexec; staleness; staleness--, start = start->parents[0])
         if (!start->parents.size()) return;
     std::stack<block_t> s;
-    start->qc_ref = nullptr;
     s.push(start);
     while (!s.empty())
     {
@@ -202,7 +213,6 @@ void HotStuffCore::prune(uint32_t staleness) {
             s.pop();
             continue;
         }
-        blk->qc_ref = nullptr;
         s.push(blk->parents.back());
         blk->parents.pop_back();
     }
@@ -275,7 +285,7 @@ HotStuffCore::operator std::string () const {
     DataStream s;
     s << "<hotstuff "
       << "bqc=" << get_hex10(bqc->get_hash()) << " "
-      << "bqc.rheight=" << std::to_string(bqc->qc_ref->height) << " "
+      << "bqc.height=" << std::to_string(bqc->height) << " "
       << "bexec=" << get_hex10(bexec->get_hash()) << " "
       << "vheight=" << std::to_string(vheight) << " "
       << "tails=" << std::to_string(tails.size()) << ">";

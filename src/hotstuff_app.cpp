@@ -203,11 +203,19 @@ int main(int argc, char **argv) {
     auto parent_limit = opt_parent_limit->get();
     hotstuff::pacemaker_bt pmaker;
     if (opt_pace_maker->get() == "sticky")
-        pmaker = new hotstuff::PaceMakerSticky(parent_limit, opt_qc_timeout->get(), ec);
+    {
+        assert(0);
+        //pmaker = new hotstuff::PaceMakerSticky(parent_limit, opt_qc_timeout->get(), ec);
+    }
     else if (opt_pace_maker->get() == "rr")
-        pmaker = new hotstuff::PaceMakerRR(parent_limit, opt_qc_timeout->get(), ec);
+    {
+        assert(0);
+        //pmaker = new hotstuff::PaceMakerRR(parent_limit, opt_qc_timeout->get(), ec);
+    }
     else
+    {
         pmaker = new hotstuff::PaceMakerDummyFixed(opt_fixed_proposer->get(), parent_limit);
+    }
 
     papp = new HotStuffApp(opt_blk_size->get(),
                         opt_stat_period->get(),

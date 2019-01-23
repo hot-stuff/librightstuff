@@ -54,6 +54,13 @@ void MsgBlame::postponed_parse(HotStuffCore *hsc) {
     serialized >> inner;
 }
 
+const opcode_t MsgBlameNotify::opcode;
+MsgBlameNotify::MsgBlameNotify(const BlameNotify &inner) { serialized << inner; }
+void MsgBlameNotify::postponed_parse(HotStuffCore *hsc) {
+    inner.hsc = hsc;
+    serialized >> inner;
+}
+
 const opcode_t MsgReqBlock::opcode;
 MsgReqBlock::MsgReqBlock(const std::vector<uint256_t> &blk_hashes) {
     serialized << htole((uint32_t)blk_hashes.size());
@@ -241,13 +248,9 @@ promise_t HotStuffBase::async_deliver_blk(const uint256_t &blk_hash,
     async_fetch_blk(blk_hash, &replica_id).then([this, replica_id](block_t blk) {
         /* qc_ref should be fetched */
         std::vector<promise_t> pms;
-        const auto &qc = blk->get_qc();
-        if (qc)
-            pms.push_back(async_fetch_blk(qc->get_blk_hash(), &replica_id));
         /* the parents should be delivered */
         for (const auto &phash: blk->get_parent_hashes())
             pms.push_back(async_deliver_blk(phash, replica_id));
-        pms.push_back(blk->verify(get_config(), vpool));
         promise::all(pms).then([this, blk]() {
             on_deliver_blk(blk);
         });
@@ -262,10 +265,65 @@ void HotStuffBase::propose_handler(MsgPropose &&msg, const Net::conn_t &conn) {
     block_t blk = prop.blk;
     if (!blk) return;
     promise::all(std::vector<promise_t>{
-        async_deliver_blk(prop.bqc_hash, peer),
         async_deliver_blk(blk->get_hash(), peer),
     }).then([this, prop = std::move(prop)]() {
         on_receive_proposal(prop);
+    });
+}
+
+void HotStuffBase::vote_handler(MsgVote &&msg, const Net::conn_t &conn) {
+    const NetAddr &peer = conn->get_peer();
+    msg.postponed_parse(this);
+    RcObj<Vote> v(new Vote(std::move(msg.inner)));
+    promise::all(std::vector<promise_t>{
+        async_deliver_blk(v->blk_hash, peer)
+    }).then([this, v]() {
+        return v->verify(vpool);
+    }).then([this, v, peer](bool result) {
+        if (!result)
+            LOG_WARN("invalid vote message from %s", std::string(peer).c_str());
+        else
+            on_receive_vote(*v);
+    });
+}
+
+void HotStuffBase::notify_handler(MsgNotify &&msg, const Net::conn_t &conn) {
+    const NetAddr &peer = conn->get_peer();
+    msg.postponed_parse(this);
+    RcObj<Notify> n(new Notify(std::move(msg.inner)));
+    promise::all(std::vector<promise_t>{
+        async_deliver_blk(n->blk_hash, peer)
+    }).then([this, n]() {
+        return n->verify(vpool);
+    }).then([this, n, peer](bool result) {
+        if (!result)
+            LOG_WARN("invalid vote message from %s", std::string(peer).c_str());
+        else
+            on_receive_notify(*n);
+    });
+}
+
+void HotStuffBase::blame_handler(MsgBlame &&msg, const Net::conn_t &conn) {
+    const NetAddr &peer = conn->get_peer();
+    msg.postponed_parse(this);
+    RcObj<Blame> b(new Blame(std::move(msg.inner)));
+    b->verify(vpool).then([this, b, peer](bool result) {
+        if (!result)
+            LOG_WARN("invalid blame message from %s", std::string(peer).c_str());
+        else
+            on_receive_blame(*b);
+    });
+}
+
+void HotStuffBase::blamenotify_handler(MsgBlameNotify &&msg, const Net::conn_t &conn) {
+    const NetAddr &peer = conn->get_peer();
+    msg.postponed_parse(this);
+    RcObj<BlameNotify> bn(new BlameNotify(std::move(msg.inner)));
+    bn->verify(vpool).then([this, bn, peer](bool result) {
+        if (!result)
+            LOG_WARN("invalid blame message from %s", std::string(peer).c_str());
+        else
+            on_receive_blamenotify(*bn);
     });
 }
 
@@ -384,6 +442,7 @@ HotStuffBase::HotStuffBase(uint32_t blk_size,
     pn.reg_handler(salticidae::generic_bind(&HotStuffBase::vote_handler, this, _1, _2));
     pn.reg_handler(salticidae::generic_bind(&HotStuffBase::notify_handler, this, _1, _2));
     pn.reg_handler(salticidae::generic_bind(&HotStuffBase::blame_handler, this, _1, _2));
+    pn.reg_handler(salticidae::generic_bind(&HotStuffBase::blamenotify_handler, this, _1, _2));
     pn.reg_handler(salticidae::generic_bind(&HotStuffBase::req_blk_handler, this, _1, _2));
     pn.reg_handler(salticidae::generic_bind(&HotStuffBase::resp_blk_handler, this, _1, _2));
     pn.start();

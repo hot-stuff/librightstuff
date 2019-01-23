@@ -177,23 +177,11 @@ class Block {
 
     const uint256_t &get_hash() const { return hash; }
 
-    bool verify(const ReplicaConfig &config) const {
-        if (qc && !qc->verify(config)) return false;
-        return true;
-    }
-
-    promise_t verify(const ReplicaConfig &config, VeriPool &vpool) const {
-        return (qc ? qc->verify(config, vpool) :
-        promise_t([](promise_t &pm) { pm.resolve(true); }));
-    }
-
     int8_t get_decision() const { return decision; }
 
     bool is_delivered() const { return delivered; }
 
     uint32_t get_height() const { return height; }
-
-    const quorum_cert_bt &get_qc() const { return qc; }
 
     const bytearray_t &get_extra() const { return extra; }
 

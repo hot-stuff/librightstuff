@@ -78,6 +78,15 @@ struct MsgBlame {
     void postponed_parse(HotStuffCore *hsc);
 };
 
+struct MsgBlameNotify {
+    static const opcode_t opcode = 0x6;
+    DataStream serialized;
+    BlameNotify inner;
+    MsgBlameNotify(const BlameNotify &);
+    MsgBlameNotify(DataStream &&s): serialized(std::move(s)) {}
+    void postponed_parse(HotStuffCore *hsc);
+};
+
 struct MsgReqBlock {
     static const opcode_t opcode = 0x2;
     DataStream serialized;
@@ -193,39 +202,13 @@ class HotStuffBase: public HotStuffCore {
     void on_fetch_blk(const block_t &blk);
     void on_deliver_blk(const block_t &blk);
 
-    template<typename T, typename M>
-    void _vote_like_handler(M &&msg, const Net::conn_t &conn, std::function<void(const T &)> cb) {
-        const NetAddr &peer = conn->get_peer();
-        msg.postponed_parse(this);
-        //auto &inner = msg.inner;
-        RcObj<T> v(new T(std::move(msg.inner)));
-        promise::all(std::vector<promise_t>{
-            async_deliver_blk(v->blk_hash, peer)
-        }).then([v]() {
-            //bool result = inner->verify();
-            return v->verify(vpool);
-        }).then([cb=std::move(cb), v](bool result) {
-            if (!result)
-                LOG_WARN("invalid vote-like message");
-            else
-                cb(*v);
-        });
-    }
-
     /** deliver consensus message: <propose> */
     inline void propose_handler(MsgPropose &&, const Net::conn_t &);
     /** deliver consensus message: <vote> */
-    inline void vote_handler(MsgVote &&vote, const Net::conn_t &conn) {
-        _vote_like_handler<Vote, MsgVote>(vote, conn, std::bind(&HotStuffCore::on_receive_vote, this, _1));
-    }
-
-    inline void notify_handler(MsgNotify &&notify, const Net::conn_t &conn) {
-        _vote_like_handler<Notify, MsgNotify>(notify, conn, std::bind(&HotStuffCore::on_receive_notify, this, _1));
-    }
-
-    inline void blame_handler(MsgBlame &&blame, const Net::conn_t &conn) {
-        _vote_like_handler<Blame, MsgBlame>(blame, conn, std::bind(&HotStuffCore::on_receive_blame, this, _1));
-    }
+    inline void vote_handler(MsgVote &&, const Net::conn_t &);
+    inline void notify_handler(MsgNotify &&, const Net::conn_t &);
+    inline void blame_handler(MsgBlame &&, const Net::conn_t &);
+    inline void blamenotify_handler(MsgBlameNotify &&, const Net::conn_t &);
 
     /** fetches full block data */
     inline void req_blk_handler(MsgReqBlock &&, const Net::conn_t &);
@@ -234,9 +217,9 @@ class HotStuffBase: public HotStuffCore {
 
     template<typename T, typename M>
     void _do_broadcast(const T &t) {
-        M msg(t);
-        for (const auto &replica: base.peers)
-            pn.send_msg(msg, replica);
+        M m(t);
+        for (const auto &replica: peers)
+            pn.send_msg(std::move(m), replica);
     }
 
     void do_broadcast_proposal(const Proposal &prop) override {
@@ -253,6 +236,10 @@ class HotStuffBase: public HotStuffCore {
 
     void do_broadcast_blame(const Blame &blame) override {
         _do_broadcast<Blame, MsgBlame>(blame);
+    }
+
+    void do_broadcast_blamenotify(const BlameNotify &bn) override {
+        _do_broadcast<BlameNotify, MsgBlameNotify>(bn);
     }
 
     void do_decide(Finality &&) override;

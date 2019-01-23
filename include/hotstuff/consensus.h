@@ -33,7 +33,11 @@ struct Proposal;
 struct Vote;
 struct Notify;
 struct Blame;
+struct BlameNotify;
 struct Finality;
+
+// TODO: optimize the repr of Status
+using status_cert_t = salticidae::BoxObj<std::vector<Notify>>;
 
 /** Abstraction for HotStuff protocol state machine (without network implementation). */
 class HotStuffCore {
@@ -61,7 +65,7 @@ class HotStuffCore {
     block_t get_delivered_blk(const uint256_t &blk_hash);
     void sanity_check_delivered(const block_t &blk);
     void check_commit(const block_t &_bqc);
-    bool update(const uint256_t &bqc_hash);
+    bool update(const block_t blk);
     void on_bqc_update();
     void on_qc_finish(const block_t &blk);
     void on_propose_(const Proposal &prop);
@@ -74,9 +78,7 @@ class HotStuffCore {
     BoxObj<EntityStorage> storage;
 
     HotStuffCore(ReplicaID id, privkey_bt &&priv_key);
-    virtual ~HotStuffCore() {
-        b0->qc_ref = nullptr;
-    }
+    virtual ~HotStuffCore() {}
 
     /* Inputs of the state machine triggered by external events, should called
      * by the class user, with proper invariants. */
@@ -101,10 +103,9 @@ class HotStuffCore {
     /** Call upon the delivery of a vote message.
      * The block mentioned in the message should be already delivered. */
     void on_receive_vote(const Vote &vote);
-
     void on_receive_notify(const Notify &notify);
-
     void on_receive_blame(const Blame &blame);
+    void on_receive_blamenotify(const BlameNotify &blame);
 
     /** Call to submit new commands to be decided (executed). "Parents" must
      * contain at least one block, and the first block is the actual parent,
@@ -129,6 +130,7 @@ class HotStuffCore {
     virtual void do_broadcast_vote(const Vote &vote) = 0;
     virtual void do_broadcast_notify(const Notify &notify) = 0;
     virtual void do_broadcast_blame(const Blame &blame) = 0;
+    virtual void do_broadcast_blamenotify(const BlameNotify &bn) = 0;
 
     /* The user plugs in the detailed instances for those
      * polymorphic data types. */
@@ -172,24 +174,10 @@ class HotStuffCore {
     void set_neg_vote(bool _neg_vote) { neg_vote = _neg_vote; }
 };
 
-// TODO: optimize the repr of Status
-using status_cert_t = std::vector<Notify>;
-
-void get_vote_proof_text_hash(const uint256_t &blk_hash) {
-    DataStream p;
-    p << ProofType::VOTE << blk_hash;
-    return p.get_hash();
-}
-
-void get_blame_proof_text_hash(const uint256_t &blk_hash) {
-    DataStream p;
-    p << ProofType::BLAME << blk_hash;
-    return p.get_hash();
-}
 
 enum ProofType {
-    VOTE = 0x0,
-    BLAME = 0x1
+    VOTE = 0x00,
+    BLAME = 0x01
 };
 
 /** Abstraction for proposal messages. */
@@ -200,7 +188,7 @@ struct Proposal: public Serializable {
     /** the cert for blk.parent; unused, for the future protocol */
     quorum_cert_bt cert_pblk;
     /** optional status messages (S) */
-    status_cert_t status;
+    status_cert_t status_cert;
 
     /** handle of the core object to allow polymorphism. The user should use
      * a pointer to the object of the class derived from HotStuffCore */
@@ -210,50 +198,41 @@ struct Proposal: public Serializable {
     Proposal(ReplicaID proposer,
             const block_t &blk,
             quorum_cert_bt &&cert_pblk,
-            status_cert_t &&status,
+            status_cert_t &&status_cert,
             HotStuffCore *hsc):
         proposer(proposer),
         blk(blk), cert_pblk(std::move(cert_pblk)),
-        status(std::move(status))
+        status_cert(std::move(status_cert)),
         hsc(hsc) {}
+
+    Proposal(const Proposal &other):
+        proposer(other.proposer),
+        blk(other.blk),
+        cert_pblk(other.cert_pblk->clone()),
+        status_cert(new std::vector(*other.status_cert)),
+        hsc(other.hsc) {
+    }
 
     void serialize(DataStream &s) const override {
         s << proposer
           << *blk << *cert_pblk;
-        if (status == nullptr)
-            s << (uint32_t)0;
+        if (status_cert == nullptr)
+            s << (uint8_t)0;
         else
         {
-            assert(status->size() > 0);
-            s << (uint32_t)status->size();
-            for (const auto &i: *status)
-                s << i;
+            s << (uint8_t)1;
+            for (const auto &v: *status_cert) s << v;
         }
     }
 
-    void unserialize(DataStream &s) override {
-        assert(hsc != nullptr);
-        uint8_t nstatus;
-        s >> proposer;
-        Block _blk;
-        _blk.unserialize(s, hsc);
-        blk = hsc->storage->add_blk(std::move(_blk), hsc->get_config());
-        hsc->parse_part_cert(s);
-        s >> nstatus;
-        if (nstatus)
-        {
-            status.resize(nstatus);
-            for (uint32_t i = 0; i < nstatus; i++)
-                s >> status[i];
-        }
-    }
+    inline void unserialize(DataStream &s) override;
 
     operator std::string () const {
         DataStream s;
         s << "<proposal "
           << "rid=" << std::to_string(proposer) << " "
           << "blk=" << get_hex10(blk->get_hash()) << " "
-          << "status=" << status ? "yes" : "no" << ">";
+          << "status=" << (status_cert ? "yes" : "no") << ">";
         return std::move(s);
     }
 };
@@ -296,16 +275,22 @@ struct Vote: public Serializable {
         cert = hsc->parse_part_cert(s);
     }
 
+    static uint256_t proof_text_hash(const uint256_t &blk_hash) {
+        DataStream p;
+        p << (uint8_t)ProofType::VOTE << blk_hash;
+        return p.get_hash();
+    }
+
     bool verify() const {
         assert(hsc != nullptr);
         return cert->verify(hsc->get_config().get_pubkey(voter)) &&
-                cert->get_blk_hash() == get_vote_proof_text_hash(blk_hash);
+                cert->get_blk_hash() == proof_text_hash(blk_hash);
     }
 
     promise_t verify(VeriPool &vpool) const {
         assert(hsc != nullptr);
         return cert->verify(hsc->get_config().get_pubkey(voter), vpool).then([this](bool result) {
-            return result && cert->get_blk_hash() == get_vote_proof_text_hash(blk_hash);
+            return result && cert->get_blk_hash() == proof_text_hash(blk_hash);
         });
     }
 
@@ -327,14 +312,14 @@ struct Notify: public Serializable {
 
     Notify(): qc(nullptr), hsc(nullptr) {}
     Notify(const uint256_t blk_hash,
-        quorum_cert_bt &&qc,
-        HotStuffCore *hsc):
+           quorum_cert_bt &&qc,
+           HotStuffCore *hsc):
         blk_hash(blk_hash),
         qc(std::move(qc)), hsc(hsc) {}
 
-    Notify(const Vote &other):
-        blk_hash(blk_hash),
-        qc(qc->clone()), hsc(other.hsc) {}
+    Notify(const Notify &other):
+        blk_hash(other.blk_hash),
+        qc(other.qc->clone()), hsc(other.hsc) {}
 
     Notify(Notify &&other) = default;
     
@@ -350,13 +335,13 @@ struct Notify: public Serializable {
     bool verify() const {
         assert(hsc != nullptr);
         return qc->verify(hsc->get_config()) &&
-            qc->get_blk_hash() == get_vote_proof_text_hash(blk_hash);
+            qc->get_blk_hash() == Vote::proof_text_hash(blk_hash);
     }
 
     promise_t verify(VeriPool &vpool) const {
         assert(hsc != nullptr);
         return qc->verify(hsc->get_config(), vpool).then([this](bool result) {
-            return result && qc->get_blk_hash() == get_vote_proof_text_hash(blk_hash);
+            return result && qc->get_blk_hash() == Vote::proof_text_hash(blk_hash);
         });
     }
 
@@ -370,7 +355,7 @@ struct Notify: public Serializable {
 
 struct Blame: public Serializable {
     ReplicaID blamer;
-    uint256_t blk_hash;
+    uint32_t view;
     part_cert_bt cert;
     
     /** handle of the core object to allow polymorphism */
@@ -378,41 +363,47 @@ struct Blame: public Serializable {
 
     Blame(): cert(nullptr), hsc(nullptr) {}
     Blame(ReplicaID blamer,
-        const uint256_t &blk_hash,
+        uint32_t view,
         part_cert_bt &&cert,
         HotStuffCore *hsc):
         blamer(blamer),
-        blk_hash(blk_hash),
+        view(view),
         cert(std::move(cert)), hsc(hsc) {}
 
-    Blame(const Vote &other):
+    Blame(const Blame &other):
         blamer(other.blamer),
-        blk_hash(other.blk_hash),
+        view(other.view),
         cert(other.cert->clone()),
         hsc(other.hsc) {}
 
     Blame(Blame &&other) = default;
     
     void serialize(DataStream &s) const override {
-        s << blamer << blk_hash << *cert;
+        s << blamer << view << *cert;
     }
 
     void unserialize(DataStream &s) override {
         assert(hsc != nullptr);
-        s >> blamer >> blk_hash;
+        s >> blamer >> view;
         cert = hsc->parse_part_cert(s);
+    }
+
+    static uint256_t proof_text_hash(uint32_t view) {
+        DataStream p;
+        p << (uint8_t)ProofType::BLAME << view;
+        return p.get_hash();
     }
 
     bool verify() const {
         assert(hsc != nullptr);
         return cert->verify(hsc->get_config().get_pubkey(blamer)) &&
-                cert->get_blk_hash() == get_blame_proof_text_hash(blk_hash);
+                cert->get_blk_hash() == proof_text_hash(view);
     }
 
     promise_t verify(VeriPool &vpool) const {
         assert(hsc != nullptr);
         return cert->verify(hsc->get_config().get_pubkey(blamer), vpool).then([this](bool result) {
-            return result && cert->get_blk_hash() == get_blame_proof_text_hash(blk_hash);
+            return result && cert->get_blk_hash() == proof_text_hash(view);
         });
     }
 
@@ -420,11 +411,78 @@ struct Blame: public Serializable {
         DataStream s;
         s << "<blame "
           << "rid=" << std::to_string(blamer) << " "
-          << "blk=" << get_hex10(blk_hash) << ">";
+          << "view=" << std::to_string(view) << ">";
         return std::move(s);
     }
 };
 
+struct BlameNotify: public Serializable {
+    uint32_t view;
+    quorum_cert_bt qc;
+    
+    /** handle of the core object to allow polymorphism */
+    HotStuffCore *hsc;
+
+    BlameNotify(): qc(nullptr), hsc(nullptr) {}
+    BlameNotify(uint32_t view,
+                quorum_cert_bt &&qc,
+                HotStuffCore *hsc):
+        view(view),
+        qc(std::move(qc)), hsc(hsc) {}
+
+    BlameNotify(const BlameNotify &other):
+        view(other.view),
+        qc(other.qc->clone()), hsc(other.hsc) {}
+
+    BlameNotify(BlameNotify &&other) = default;
+    
+    void serialize(DataStream &s) const override {
+        s << view << *qc;
+    }
+
+    void unserialize(DataStream &s) override {
+        s >> view;
+        qc = hsc->parse_quorum_cert(s);
+    }
+
+    bool verify() const {
+        assert(hsc != nullptr);
+        return qc->verify(hsc->get_config()) &&
+            qc->get_blk_hash() == Blame::proof_text_hash(view);
+    }
+
+    promise_t verify(VeriPool &vpool) const {
+        assert(hsc != nullptr);
+        return qc->verify(hsc->get_config(), vpool).then([this](bool result) {
+            return result && qc->get_blk_hash() == Blame::proof_text_hash(view);
+        });
+    }
+
+    operator std::string () const {
+        DataStream s;
+        s << "<blame notify "
+          << "view=" << std::to_string(view) << ">";
+        return std::move(s);
+    }
+};
+
+inline void Proposal::unserialize(DataStream &s) {
+    assert(hsc != nullptr);
+    uint8_t has_status;
+    s >> proposer;
+    Block _blk;
+    _blk.unserialize(s, hsc);
+    blk = hsc->storage->add_blk(std::move(_blk), hsc->get_config());
+    hsc->parse_part_cert(s);
+    s >> has_status;
+    if (has_status)
+    {
+        auto ns = hsc->get_config().nmajority;
+        auto status_cert = status_cert_t(new std::vector<Notify>());
+        status_cert->resize(ns);
+        for (auto &v: *status_cert) s >> v;
+    }
+}
 
 struct Finality: public Serializable {
     ReplicaID rid;

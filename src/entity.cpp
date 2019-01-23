@@ -26,10 +26,6 @@ void Block::serialize(DataStream &s) const {
     s << htole((uint32_t)cmds.size());
     for (auto cmd: cmds)
         s << cmd;
-    if (qc)
-        s << (uint8_t)1 << *qc;
-    else
-        s << (uint8_t)0;
     s << htole((uint32_t)extra.size()) << extra;
 }
 
@@ -49,7 +45,6 @@ void Block::unserialize(DataStream &s, HotStuffCore *hsc) {
 //    for (auto &cmd: cmds)
 //        cmd = hsc->parse_cmd(s);
     s >> flag;
-    qc = flag ? hsc->parse_quorum_cert(s) : nullptr;
     s >> n;
     n = letoh(n);
     if (n == 0)
