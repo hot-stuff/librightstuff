@@ -47,6 +47,8 @@ class HotStuffCore {
     block_t bqc;
     block_t bexec;                            /**< last executed block */
     uint32_t vheight;          /**< height of the block last voted for */
+    uint32_t view;             /**< the current view number */
+    /* Q: does the proposer retry the same block in a new view? */
     status_cert_t status_cert; /**< status certificate */
 
     /* === auxilliary variables === */
@@ -226,6 +228,8 @@ struct Proposal: public Serializable {
     }
 
     inline void unserialize(DataStream &s) override;
+
+    promise_t verify(VeriPool &vpool) const;
 
     operator std::string () const {
         DataStream s;
@@ -483,6 +487,14 @@ inline void Proposal::unserialize(DataStream &s) {
         for (auto &v: *status_cert) s >> v;
     }
 }
+
+inline promise_t verify(VeriPool &vpool) const {
+    assert(hsc != nullptr);
+    return cert_pblk->verify(hsc->get_config(), vpool).then([this](bool result) {
+        return result && cert_pblk->get_blk_hash() == Vote::proof_text_hash(blk.parent_hashes[0]);
+    });
+}
+
 
 struct Finality: public Serializable {
     ReplicaID rid;
