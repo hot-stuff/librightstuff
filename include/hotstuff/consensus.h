@@ -47,8 +47,10 @@ class HotStuffCore {
     block_t bqc;
     block_t bexec;                            /**< last executed block */
     uint32_t vheight;          /**< height of the block last voted for */
+    uint32_t nheight;          /**< height of the block last notified for */
     uint32_t view;             /**< the current view number */
     /* Q: does the proposer retry the same block in a new view? */
+    /* Q: vheight & nheight & gaps? */
     status_cert_t status_cert; /**< status certificate */
 
     /* === auxilliary variables === */
@@ -68,6 +70,7 @@ class HotStuffCore {
     void sanity_check_delivered(const block_t &blk);
     void check_commit(const block_t &_bqc);
     bool update(const block_t blk);
+    void broadcast_vote(const block_t &blk);
     void on_bqc_update();
     void on_qc_finish(const block_t &blk);
     void on_propose_(const Proposal &prop);
@@ -87,7 +90,10 @@ class HotStuffCore {
 
     /** Call to initialize the protocol, should be called once before all other
      * functions. */
-    void on_init(uint32_t nfaulty) { config.nmajority = nfaulty + 1; }
+    void on_init(uint32_t nfaulty, double delta) {
+        config.nmajority = nfaulty + 1;
+        config.delta = delta;
+    }
 
     /* TODO: better name for "delivery" ? */
     /** Call to inform the state machine that a block is ready to be handled.
@@ -108,6 +114,7 @@ class HotStuffCore {
     void on_receive_notify(const Notify &notify);
     void on_receive_blame(const Blame &blame);
     void on_receive_blamenotify(const BlameNotify &blame);
+    void on_commit_timeout(const block_t &blk);
 
     /** Call to submit new commands to be decided (executed). "Parents" must
      * contain at least one block, and the first block is the actual parent,
@@ -133,6 +140,8 @@ class HotStuffCore {
     virtual void do_broadcast_notify(const Notify &notify) = 0;
     virtual void do_broadcast_blame(const Blame &blame) = 0;
     virtual void do_broadcast_blamenotify(const BlameNotify &bn) = 0;
+    virtual void set_commit_timer(const block_t &blk, double t_sec) = 0;
+    virtual void stop_commit_timer(uint32_t height) = 0;
 
     /* The user plugs in the detailed instances for those
      * polymorphic data types. */
@@ -196,7 +205,7 @@ struct Proposal: public Serializable {
      * a pointer to the object of the class derived from HotStuffCore */
     HotStuffCore *hsc;
 
-    Proposal(): blk(nullptr), cert_pblk(nullptr), hsc(nullptr) {}
+    Proposal(): blk(nullptr), cert_pblk(nullptr), status_cert(nullptr), hsc(nullptr) {}
     Proposal(ReplicaID proposer,
             const block_t &blk,
             quorum_cert_bt &&cert_pblk,
@@ -212,8 +221,7 @@ struct Proposal: public Serializable {
         blk(other.blk),
         cert_pblk(other.cert_pblk->clone()),
         status_cert(new std::vector(*other.status_cert)),
-        hsc(other.hsc) {
-    }
+        hsc(other.hsc) {}
 
     void serialize(DataStream &s) const override {
         s << proposer
@@ -477,7 +485,7 @@ inline void Proposal::unserialize(DataStream &s) {
     Block _blk;
     _blk.unserialize(s, hsc);
     blk = hsc->storage->add_blk(std::move(_blk), hsc->get_config());
-    hsc->parse_part_cert(s);
+    cert_pblk = hsc->parse_quorum_cert(s);
     s >> has_status;
     if (has_status)
     {
@@ -488,10 +496,22 @@ inline void Proposal::unserialize(DataStream &s) {
     }
 }
 
-inline promise_t verify(VeriPool &vpool) const {
+inline promise_t Proposal::verify(VeriPool &vpool) const {
+    auto &config = hsc->get_config();
     assert(hsc != nullptr);
-    return cert_pblk->verify(hsc->get_config(), vpool).then([this](bool result) {
-        return result && cert_pblk->get_blk_hash() == Vote::proof_text_hash(blk.parent_hashes[0]);
+    std::vector<promise_t> pms{cert_pblk->verify(config, vpool)};
+    for (auto &s: *status_cert)
+        pms.push_back(s.verify(vpool));
+    return promise::all(pms).then([this](const promise::values_t values) {
+        bool result = cert_pblk->get_blk_hash() ==
+            Vote::proof_text_hash(blk->get_parent_hashes()[0]);
+        if (!result) return false;
+        for (auto &v: values)
+        {
+            auto r = promise::any_cast<bool>(v);
+            if (!(result &= r)) return false;
+        }
+        return true;
     });
 }
 

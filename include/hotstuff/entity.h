@@ -62,8 +62,9 @@ class ReplicaConfig {
     public:
     size_t nreplicas;
     size_t nmajority;
+    double delta;
 
-    ReplicaConfig(): nreplicas(0), nmajority(0) {}
+    ReplicaConfig(): nreplicas(0), nmajority(0), delta(0) {}
 
     void add_replica(ReplicaID rid, const ReplicaInfo &info) {
         replica_map.insert(std::make_pair(rid, info));
@@ -90,7 +91,7 @@ class ReplicaConfig {
 class Block;
 class HotStuffCore;
 
-using block_t = salticidae::RcObj<Block>;
+using block_t = salticidae::ArcObj<Block>;
 using block_weak_t = salticidae::WeakObj<Block>;
 
 class Command: public Serializable {

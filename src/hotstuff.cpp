@@ -264,9 +264,7 @@ void HotStuffBase::propose_handler(MsgPropose &&msg, const Net::conn_t &conn) {
     auto &prop = msg.proposal;
     block_t blk = prop.blk;
     if (!blk) return;
-    promise::all(std::vector<promise_t>{
-        async_deliver_blk(blk->get_hash(), peer),
-    }).then([this, prop = std::move(prop)]() {
+    async_deliver_blk(blk->get_hash(), peer).then([this, prop = std::move(prop)]() {
         on_receive_proposal(prop);
     });
 }
@@ -276,9 +274,8 @@ void HotStuffBase::vote_handler(MsgVote &&msg, const Net::conn_t &conn) {
     msg.postponed_parse(this);
     RcObj<Vote> v(new Vote(std::move(msg.inner)));
     promise::all(std::vector<promise_t>{
-        async_deliver_blk(v->blk_hash, peer)
-    }).then([this, v]() {
-        return v->verify(vpool);
+        async_deliver_blk(v->blk_hash, peer),
+        v->verify(vpool)
     }).then([this, v, peer](bool result) {
         if (!result)
             LOG_WARN("invalid vote message from %s", std::string(peer).c_str());
@@ -292,9 +289,8 @@ void HotStuffBase::notify_handler(MsgNotify &&msg, const Net::conn_t &conn) {
     msg.postponed_parse(this);
     RcObj<Notify> n(new Notify(std::move(msg.inner)));
     promise::all(std::vector<promise_t>{
-        async_deliver_blk(n->blk_hash, peer)
-    }).then([this, n]() {
-        return n->verify(vpool);
+        async_deliver_blk(n->blk_hash, peer),
+        n->verify(vpool)
     }).then([this, n, peer](bool result) {
         if (!result)
             LOG_WARN("invalid vote message from %s", std::string(peer).c_str());
@@ -325,6 +321,20 @@ void HotStuffBase::blamenotify_handler(MsgBlameNotify &&msg, const Net::conn_t &
         else
             on_receive_blamenotify(*bn);
     });
+}
+
+void HotStuffBase::set_commit_timer(const block_t &blk, double t_sec) {
+    auto height = blk->get_height();
+    auto &timer = commit_timers[height] =
+        TimerEvent(ec, [this, blk=std::move(blk), height](TimerEvent &) {
+            stop_commit_timer(height);
+            on_commit_timeout(blk);
+        });
+    timer.add(t_sec);
+}
+
+void HotStuffBase::stop_commit_timer(uint32_t height) {
+    commit_timers.erase(height);
 }
 
 void HotStuffBase::req_blk_handler(MsgReqBlock &&msg, const Net::conn_t &conn) {
@@ -462,12 +472,12 @@ void HotStuffBase::do_decide(Finality &&fin) {
 
 HotStuffBase::~HotStuffBase() {}
 
-void HotStuffBase::start(bool ec_loop) {
+void HotStuffBase::start(bool ec_loop, double delta) {
     /* ((n - 1) + 1 - 1) / 2 */
     uint32_t nfaulty = peers.size() / 2;
     if (nfaulty == 0)
         LOG_WARN("too few replicas in the system to tolerate any failure");
-    on_init(nfaulty);
+    on_init(nfaulty, delta);
     pmaker->init(this);
     if (ec_loop)
         ec.dispatch();

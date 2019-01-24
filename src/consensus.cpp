@@ -36,6 +36,9 @@ HotStuffCore::HotStuffCore(ReplicaID id,
         bqc(b0),
         bexec(b0),
         vheight(0),
+        nheight(0),
+        view(0),
+        status_cert(nullptr),
         priv_key(std::move(priv_key)),
         tails{bqc},
         neg_vote(false),
@@ -75,27 +78,28 @@ bool HotStuffCore::on_deliver_blk(const block_t &blk) {
     return true;
 }
 
-void HotStuffCore::check_commit(const block_t &_blk) {
-    // XXX
-    //for (b = p; b->height > bexec->height; b = b->parents[0])
-    //{ /* TODO: also commit the uncles/aunts */
-    //    commit_queue.push_back(b);
-    //}
-    //if (b != bexec)
-    //    throw std::runtime_error("safety breached :( " +
-    //                            std::string(*p) + " " +
-    //                            std::string(*bexec));
-    //for (auto it = commit_queue.rbegin(); it != commit_queue.rend(); it++)
-    //{
-    //    const block_t &blk = *it;
-    //    blk->decision = 1;
-    //    LOG_PROTO("commit %s", std::string(*blk).c_str());
-    //    size_t idx = 0;
-    //    for (auto cmd: blk->cmds)
-    //        do_decide(Finality(id, 1, idx, blk->height,
-    //                            cmd, blk->get_hash()));
-    //}
-    //bexec = p;
+void HotStuffCore::check_commit(const block_t &p) {
+    std::vector<block_t> commit_queue;
+    block_t b;
+    for (b = p; b->height > bexec->height; b = b->parents[0])
+    { /* TODO: also commit the uncles/aunts */
+        commit_queue.push_back(b);
+    }
+    if (b != bexec)
+        throw std::runtime_error("safety breached :( " +
+                                std::string(*p) + " " +
+                                std::string(*bexec));
+    for (auto it = commit_queue.rbegin(); it != commit_queue.rend(); it++)
+    {
+        const block_t &blk = *it;
+        blk->decision = 1;
+        LOG_PROTO("commit %s", std::string(*blk).c_str());
+        size_t idx = 0;
+        for (auto cmd: blk->cmds)
+            do_decide(Finality(id, 1, idx, blk->height,
+                                cmd, blk->get_hash()));
+    }
+    bexec = p;
 }
 
 // TODO: the following two look okay, but needs some scrutiny
@@ -107,6 +111,17 @@ bool HotStuffCore::update(const block_t blk) {
         on_bqc_update();
     }
     return true;
+}
+
+void HotStuffCore::broadcast_vote(const block_t &blk) {
+    const auto &blk_hash = blk->get_hash();
+    Vote vote(id, blk_hash,
+            create_part_cert(
+                *priv_key,
+                Vote::proof_text_hash(blk_hash)), this);
+    on_receive_vote(vote);
+    do_broadcast_vote(vote);
+    set_commit_timer(blk, 2 * config.delta);
 }
 
 void HotStuffCore::on_propose(const std::vector<uint256_t> &cmds,
@@ -135,9 +150,7 @@ void HotStuffCore::on_propose(const std::vector<uint256_t> &cmds,
     if (bnew->height <= vheight)
         throw std::runtime_error("new block should be higher than vheight");
     vheight = bnew->height;
-    on_receive_vote(
-        Vote(id, bnew_hash,
-            create_part_cert(*priv_key, Vote::proof_text_hash(bnew_hash)), this));
+    broadcast_vote(bnew);
     on_propose_(prop);
     /* boradcast to other replicas */
     do_broadcast_proposal(prop);
@@ -147,14 +160,15 @@ void HotStuffCore::on_receive_proposal(const Proposal &prop) {
     LOG_PROTO("got %s", std::string(prop).c_str());
     block_t bnew = prop.blk;
     sanity_check_delivered(bnew);
+    // TODO: check if the proposer matches the current view
+    if (bnew->height <= vheight)
+    {
+        LOG_WARN("dropping a stale proposal");
+        return;
+    }
     on_receive_proposal_(prop);
-    do_broadcast_vote(
-        Vote(id,
-            bnew->get_hash(),
-            create_part_cert(
-                *priv_key,
-                Vote::proof_text_hash(bnew->get_hash())),
-            this));
+    vheight = bnew->height;
+    broadcast_vote(bnew);
 }
 
 // TODO: impl correct vote, notify and blame handler
@@ -162,27 +176,28 @@ void HotStuffCore::on_receive_vote(const Vote &vote) {
     LOG_PROTO("got %s", std::string(vote).c_str());
     LOG_PROTO("now state: %s", std::string(*this).c_str());
     block_t blk = get_delivered_blk(vote.blk_hash);
+    size_t qsize = blk->voted.size();
+    if (qsize >= config.nmajority) return;
     if (!blk->voted.insert(vote.voter).second)
     {
         LOG_WARN("duplicate vote from %d", vote.voter);
         return;
     }
-    size_t qsize = blk->voted.size();
-    if (qsize <= config.nmajority)
+    auto &qc = blk->self_qc;
+    if (qc == nullptr)
     {
-        auto &qc = blk->self_qc;
-        if (qc == nullptr)
-        {
-            LOG_WARN("vote for block not proposed by itself");
-            qc = create_quorum_cert(blk->get_hash());
-        }
-        qc->add_part(vote.voter, *vote.cert);
-        if (qsize == config.nmajority)
-        {
-            update(blk);
-            // TODO: broadcast Notify messages here
-            on_qc_finish(blk);
-        }
+        LOG_WARN("vote for block not proposed by itself");
+        qc = create_quorum_cert(blk->get_hash());
+    }
+    qc->add_part(vote.voter, *vote.cert);
+    if (qsize == config.nmajority)
+    {
+        update(blk);
+        qc->compute();
+        Notify notify(vote.blk_hash, qc->clone(), this);
+        on_receive_notify(notify); // deliver to itself
+        do_broadcast_notify(notify); // notify the others
+        on_qc_finish(blk);
     }
 }
 
@@ -193,6 +208,10 @@ void HotStuffCore::on_receive_blame(const Blame &blame) {
 }
 
 void HotStuffCore::on_receive_blamenotify(const BlameNotify &bn) {
+}
+
+void HotStuffCore::on_commit_timeout(const block_t &blk) {
+    check_commit(blk);
 }
 
 /*** end HotStuff protocol logic ***/
@@ -288,6 +307,9 @@ HotStuffCore::operator std::string () const {
       << "bqc.height=" << std::to_string(bqc->height) << " "
       << "bexec=" << get_hex10(bexec->get_hash()) << " "
       << "vheight=" << std::to_string(vheight) << " "
+      << "nheight=" << std::to_string(nheight) << " "
+      << "view=" << std::to_string(view) << " "
+      << "status_cert=" << (status_cert ? "yes" : "no")
       << "tails=" << std::to_string(tails.size()) << ">";
     return std::move(s);
 }

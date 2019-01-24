@@ -166,6 +166,7 @@ class HotStuffBase: public HotStuffCore {
     EventContext ec;
     VeriPool vpool;
     std::unordered_set<NetAddr> peers;
+    std::unordered_map<uint32_t, TimerEvent> commit_timers;
 
     private:
     /** whether libevent handle is owned by itself */
@@ -242,6 +243,9 @@ class HotStuffBase: public HotStuffCore {
         _do_broadcast<BlameNotify, MsgBlameNotify>(bn);
     }
 
+    void set_commit_timer(const block_t &blk, double t_sec) override;
+    void stop_commit_timer(uint32_t height) override;
+
     void do_decide(Finality &&) override;
 
     protected:
@@ -267,7 +271,7 @@ class HotStuffBase: public HotStuffCore {
     /* Submit the command to be decided. */
     promise_t exec_command(uint256_t cmd);
     void add_replica(ReplicaID idx, const NetAddr &addr, pubkey_bt &&pub_key);
-    void start(bool ec_loop = false);
+    void start(bool ec_loop = false, double delta = 1);
 
     size_t size() const { return peers.size(); }
     PaceMaker &get_pace_maker() { return *pmaker; }
