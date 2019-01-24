@@ -220,7 +220,7 @@ class HotStuffBase: public HotStuffCore {
     void _do_broadcast(const T &t) {
         M m(t);
         for (const auto &replica: peers)
-            pn.send_msg(std::move(m), replica);
+            pn.send_msg(m, replica);
     }
 
     void do_broadcast_proposal(const Proposal &prop) override {

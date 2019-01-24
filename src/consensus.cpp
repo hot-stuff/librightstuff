@@ -139,12 +139,14 @@ void HotStuffCore::on_propose(const std::vector<uint256_t> &cmds,
             nullptr
         ));
     const uint256_t bnew_hash = bnew->get_hash();
-    bnew->self_qc = create_quorum_cert(bnew_hash);
+    bnew->self_qc = create_quorum_cert(Vote::proof_text_hash(bnew_hash));
     on_deliver_blk(bnew);
     assert(p->voted.size() >= config.nmajority);
     status_cert_t sc = nullptr;
     std::swap(sc, status_cert);
-    Proposal prop(id, bnew, p->self_qc->clone(), std::move(sc), nullptr);
+    Proposal prop(id, bnew,
+            (p == b0 ? nullptr : p->self_qc->clone()),
+            std::move(sc), nullptr);
     LOG_PROTO("propose %s", std::string(*bnew).c_str());
     /* self-vote */
     if (bnew->height <= vheight)
@@ -187,9 +189,10 @@ void HotStuffCore::on_receive_vote(const Vote &vote) {
     if (qc == nullptr)
     {
         LOG_WARN("vote for block not proposed by itself");
-        qc = create_quorum_cert(blk->get_hash());
+        qc = create_quorum_cert(Vote::proof_text_hash(blk->get_hash()));
     }
     qc->add_part(vote.voter, *vote.cert);
+    qsize++;
     if (qsize == config.nmajority)
     {
         update(blk);

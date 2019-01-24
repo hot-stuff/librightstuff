@@ -276,8 +276,8 @@ void HotStuffBase::vote_handler(MsgVote &&msg, const Net::conn_t &conn) {
     promise::all(std::vector<promise_t>{
         async_deliver_blk(v->blk_hash, peer),
         v->verify(vpool)
-    }).then([this, v, peer](bool result) {
-        if (!result)
+    }).then([this, v, peer](const promise::values_t values) {
+        if (!promise::any_cast<bool>(values[1]))
             LOG_WARN("invalid vote message from %s", std::string(peer).c_str());
         else
             on_receive_vote(*v);
@@ -291,9 +291,9 @@ void HotStuffBase::notify_handler(MsgNotify &&msg, const Net::conn_t &conn) {
     promise::all(std::vector<promise_t>{
         async_deliver_blk(n->blk_hash, peer),
         n->verify(vpool)
-    }).then([this, n, peer](bool result) {
-        if (!result)
-            LOG_WARN("invalid vote message from %s", std::string(peer).c_str());
+    }).then([this, n, peer](const promise::values_t values) {
+        if (!promise::any_cast<bool>(values[1]))
+            LOG_WARN("invalid notify message from %s", std::string(peer).c_str());
         else
             on_receive_notify(*n);
     });
@@ -317,7 +317,7 @@ void HotStuffBase::blamenotify_handler(MsgBlameNotify &&msg, const Net::conn_t &
     RcObj<BlameNotify> bn(new BlameNotify(std::move(msg.inner)));
     bn->verify(vpool).then([this, bn, peer](bool result) {
         if (!result)
-            LOG_WARN("invalid blame message from %s", std::string(peer).c_str());
+            LOG_WARN("invalid blamenotify message from %s", std::string(peer).c_str());
         else
             on_receive_blamenotify(*bn);
     });
@@ -327,8 +327,8 @@ void HotStuffBase::set_commit_timer(const block_t &blk, double t_sec) {
     auto height = blk->get_height();
     auto &timer = commit_timers[height] =
         TimerEvent(ec, [this, blk=std::move(blk), height](TimerEvent &) {
-            stop_commit_timer(height);
             on_commit_timeout(blk);
+            stop_commit_timer(height);
         });
     timer.add(t_sec);
 }

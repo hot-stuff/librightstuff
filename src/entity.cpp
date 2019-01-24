@@ -31,7 +31,6 @@ void Block::serialize(DataStream &s) const {
 
 void Block::unserialize(DataStream &s, HotStuffCore *hsc) {
     uint32_t n;
-    uint8_t flag;
     s >> n;
     n = letoh(n);
     parent_hashes.resize(n);
@@ -44,7 +43,6 @@ void Block::unserialize(DataStream &s, HotStuffCore *hsc) {
         s >> cmd;
 //    for (auto &cmd: cmds)
 //        cmd = hsc->parse_cmd(s);
-    s >> flag;
     s >> n;
     n = letoh(n);
     if (n == 0)

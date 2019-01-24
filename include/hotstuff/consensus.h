@@ -219,20 +219,26 @@ struct Proposal: public Serializable {
     Proposal(const Proposal &other):
         proposer(other.proposer),
         blk(other.blk),
-        cert_pblk(other.cert_pblk->clone()),
-        status_cert(new std::vector(*other.status_cert)),
+        cert_pblk(other.cert_pblk ? other.cert_pblk->clone() : nullptr),
+        status_cert(other.status_cert ? new std::vector(*other.status_cert) : nullptr),
         hsc(other.hsc) {}
 
     void serialize(DataStream &s) const override {
         s << proposer
-          << *blk << *cert_pblk;
-        if (status_cert == nullptr)
-            s << (uint8_t)0;
+          << *blk;
+
+        if (cert_pblk)
+            s << (uint8_t)1 << *cert_pblk;
         else
+            s << (uint8_t)0;
+
+        if (status_cert)
         {
             s << (uint8_t)1;
             for (const auto &v: *status_cert) s << v;
         }
+        else
+            s << (uint8_t)0;
     }
 
     inline void unserialize(DataStream &s) override;
@@ -272,7 +278,7 @@ struct Vote: public Serializable {
     Vote(const Vote &other):
         voter(other.voter),
         blk_hash(other.blk_hash),
-        cert(other.cert->clone()),
+        cert(other.cert ? other.cert->clone() : nullptr),
         hsc(other.hsc) {}
 
     Vote(Vote &&other) = default;
@@ -331,7 +337,7 @@ struct Notify: public Serializable {
 
     Notify(const Notify &other):
         blk_hash(other.blk_hash),
-        qc(other.qc->clone()), hsc(other.hsc) {}
+        qc(other.qc ? other.qc->clone() : nullptr), hsc(other.hsc) {}
 
     Notify(Notify &&other) = default;
     
@@ -385,7 +391,7 @@ struct Blame: public Serializable {
     Blame(const Blame &other):
         blamer(other.blamer),
         view(other.view),
-        cert(other.cert->clone()),
+        cert(other.cert ? other.cert->clone() : nullptr),
         hsc(other.hsc) {}
 
     Blame(Blame &&other) = default;
@@ -444,7 +450,7 @@ struct BlameNotify: public Serializable {
 
     BlameNotify(const BlameNotify &other):
         view(other.view),
-        qc(other.qc->clone()), hsc(other.hsc) {}
+        qc(other.qc ? other.qc->clone() : nullptr), hsc(other.hsc) {}
 
     BlameNotify(BlameNotify &&other) = default;
     
@@ -480,14 +486,16 @@ struct BlameNotify: public Serializable {
 
 inline void Proposal::unserialize(DataStream &s) {
     assert(hsc != nullptr);
-    uint8_t has_status;
+    uint8_t flag;
     s >> proposer;
     Block _blk;
     _blk.unserialize(s, hsc);
     blk = hsc->storage->add_blk(std::move(_blk), hsc->get_config());
-    cert_pblk = hsc->parse_quorum_cert(s);
-    s >> has_status;
-    if (has_status)
+    s >> flag;
+    if (flag)
+        cert_pblk = hsc->parse_quorum_cert(s);
+    s >> flag;
+    if (flag)
     {
         auto ns = hsc->get_config().nmajority;
         auto status_cert = status_cert_t(new std::vector<Notify>());
@@ -499,7 +507,12 @@ inline void Proposal::unserialize(DataStream &s) {
 inline promise_t Proposal::verify(VeriPool &vpool) const {
     auto &config = hsc->get_config();
     assert(hsc != nullptr);
-    std::vector<promise_t> pms{cert_pblk->verify(config, vpool)};
+    std::vector<promise_t> pms;
+    if (cert_pblk)
+        pms.push_back(cert_pblk->verify(config, vpool));
+    else if (blk != hsc->get_genesis())
+        return promise_t([](promise_t &pm) { pm.resolve(false); });
+
     for (auto &s: *status_cert)
         pms.push_back(s.verify(vpool));
     return promise::all(pms).then([this](const promise::values_t values) {
