@@ -167,6 +167,8 @@ class HotStuffBase: public HotStuffCore {
     VeriPool vpool;
     std::unordered_set<NetAddr> peers;
     std::unordered_map<uint32_t, TimerEvent> commit_timers;
+    TimerEvent blame_timer;
+    TimerEvent viewtrans_timer;
 
     private:
     /** whether libevent handle is owned by itself */
@@ -245,6 +247,11 @@ class HotStuffBase: public HotStuffCore {
 
     void set_commit_timer(const block_t &blk, double t_sec) override;
     void stop_commit_timer(uint32_t height) override;
+    void stop_commit_timer_all() override;
+    void set_blame_timer(double t_sec) override;
+    void stop_blame_timer() override;
+    void set_viewtrans_timer(double t_sec) override;
+    void stop_viewtrans_timer() override;
 
     void do_decide(Finality &&) override;
 

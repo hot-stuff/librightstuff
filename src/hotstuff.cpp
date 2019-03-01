@@ -337,6 +337,34 @@ void HotStuffBase::stop_commit_timer(uint32_t height) {
     commit_timers.erase(height);
 }
 
+void HotStuffBase::stop_commit_timer_all() {
+    commit_timers.clear();
+}
+
+void HotStuffBase::set_blame_timer(double t_sec) {
+    blame_timer = TimerEvent(ec, [this](TimerEvent &) {
+        on_blame_timeout();
+        stop_blame_timer();
+    });
+    blame_timer.add(t_sec);
+}
+
+void HotStuffBase::stop_blame_timer() {
+    blame_timer.clear();
+}
+
+void HotStuffBase::set_viewtrans_timer(double t_sec) {
+    viewtrans_timer = TimerEvent(ec, [this](TimerEvent &) {
+        on_transview_timeout();
+        stop_viewtrans_timer();
+    });
+    viewtrans_timer.add(t_sec);
+}
+
+void HotStuffBase::stop_viewtrans_timer() {
+    viewtrans_timer.clear();
+}
+
 void HotStuffBase::req_blk_handler(MsgReqBlock &&msg, const Net::conn_t &conn) {
     const NetAddr replica = conn->get_peer();
     auto &blk_hashes = msg.blk_hashes;

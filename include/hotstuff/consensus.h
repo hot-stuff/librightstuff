@@ -44,14 +44,20 @@ class HotStuffCore {
     block_t b0;                                  /** the genesis block */
     /* === state variables === */
     /** block containing the QC for the highest block having one */
-    block_t bqc;
+    block_t hqc;
     block_t bexec;                            /**< last executed block */
     uint32_t vheight;          /**< height of the block last voted for */
     uint32_t nheight;          /**< height of the block last notified for */
     uint32_t view;             /**< the current view number */
     /* Q: does the proposer retry the same block in a new view? */
-    /* Q: vheight & nheight & gaps? */
     status_cert_t status_cert; /**< status certificate */
+    /* === only valid for the current view === */
+    bool progress; /**< whether heard a proposal in the current view: this->view */
+    bool view_trans; /**< whether the replica is in-between the views */
+    std::unordered_map<uint32_t, std::vector<block_t>> proposals;
+    int32_t conflict_idx;
+    quorum_cert_bt blame_qc;
+    std::unordered_set<ReplicaID> blamed;
 
     /* === auxilliary variables === */
     privkey_bt priv_key;            /**< private key for signing votes */
@@ -69,9 +75,10 @@ class HotStuffCore {
     block_t get_delivered_blk(const uint256_t &blk_hash);
     void sanity_check_delivered(const block_t &blk);
     void check_commit(const block_t &_bqc);
-    bool update(const block_t blk);
+    bool update_hqc(const block_t &_hqc);
+    bool update(const uint256_t &bqc_hash);
+    void on_hqc_update();
     void broadcast_vote(const block_t &blk);
-    void on_bqc_update();
     void on_qc_finish(const block_t &blk);
     void on_propose_(const Proposal &prop);
     void on_receive_proposal_(const Proposal &prop);
@@ -83,7 +90,9 @@ class HotStuffCore {
     BoxObj<EntityStorage> storage;
 
     HotStuffCore(ReplicaID id, privkey_bt &&priv_key);
-    virtual ~HotStuffCore() {}
+    virtual ~HotStuffCore() {
+        b0->qc_ref = nullptr;
+    }
 
     /* Inputs of the state machine triggered by external events, should called
      * by the class user, with proper invariants. */
@@ -115,6 +124,8 @@ class HotStuffCore {
     void on_receive_blame(const Blame &blame);
     void on_receive_blamenotify(const BlameNotify &blame);
     void on_commit_timeout(const block_t &blk);
+    void on_blame_timeout();
+    void on_viewtrans_timeout();
 
     /** Call to submit new commands to be decided (executed). "Parents" must
      * contain at least one block, and the first block is the actual parent,
@@ -141,7 +152,12 @@ class HotStuffCore {
     virtual void do_broadcast_blame(const Blame &blame) = 0;
     virtual void do_broadcast_blamenotify(const BlameNotify &bn) = 0;
     virtual void set_commit_timer(const block_t &blk, double t_sec) = 0;
+    virtual void set_blame_timer(uint32_t view, double t_sec) = 0;
     virtual void stop_commit_timer(uint32_t height) = 0;
+    virtual void stop_commit_timer_all() = 0;
+    virtual void stop_blame_timer(uint32_t view) = 0;
+    virtual void set_viewtrans_timer(double t_sec) = 0;
+    virtual void stop_viewtrans_timer() = 0;
 
     /* The user plugs in the detailed instances for those
      * polymorphic data types. */
@@ -177,7 +193,8 @@ class HotStuffCore {
 
     /* Other useful functions */
     const block_t &get_genesis() { return b0; }
-    const block_t &get_bqc() { return bqc; }
+    // NOTE: this "bqc" is actual "hqc" in Sync HotStuff
+    const block_t &get_bqc() { return hqc; }
     const ReplicaConfig &get_config() { return config; }
     ReplicaID get_id() const { return id; }
     const std::set<block_t, BlockHeightCmp> get_tails() const { return tails; }
@@ -196,8 +213,6 @@ struct Proposal: public Serializable {
     ReplicaID proposer;
     /** block being proposed */
     block_t blk;
-    /** the cert for blk.parent; unused, for the future protocol */
-    quorum_cert_bt cert_pblk;
     /** optional status messages (S) */
     status_cert_t status_cert;
 
@@ -205,32 +220,25 @@ struct Proposal: public Serializable {
      * a pointer to the object of the class derived from HotStuffCore */
     HotStuffCore *hsc;
 
-    Proposal(): blk(nullptr), cert_pblk(nullptr), status_cert(nullptr), hsc(nullptr) {}
+    Proposal(): blk(nullptr), status_cert(nullptr), hsc(nullptr) {}
     Proposal(ReplicaID proposer,
             const block_t &blk,
-            quorum_cert_bt &&cert_pblk,
             status_cert_t &&status_cert,
             HotStuffCore *hsc):
         proposer(proposer),
-        blk(blk), cert_pblk(std::move(cert_pblk)),
+        blk(blk),
         status_cert(std::move(status_cert)),
         hsc(hsc) {}
 
     Proposal(const Proposal &other):
         proposer(other.proposer),
         blk(other.blk),
-        cert_pblk(other.cert_pblk ? other.cert_pblk->clone() : nullptr),
         status_cert(other.status_cert ? new std::vector(*other.status_cert) : nullptr),
         hsc(other.hsc) {}
 
     void serialize(DataStream &s) const override {
         s << proposer
           << *blk;
-
-        if (cert_pblk)
-            s << (uint8_t)1 << *cert_pblk;
-        else
-            s << (uint8_t)0;
 
         if (status_cert)
         {
@@ -493,9 +501,6 @@ inline void Proposal::unserialize(DataStream &s) {
     blk = hsc->storage->add_blk(std::move(_blk), hsc->get_config());
     s >> flag;
     if (flag)
-        cert_pblk = hsc->parse_quorum_cert(s);
-    s >> flag;
-    if (flag)
     {
         auto ns = hsc->get_config().nmajority;
         auto status_cert = status_cert_t(new std::vector<Notify>());
@@ -508,10 +513,6 @@ inline promise_t Proposal::verify(VeriPool &vpool) const {
     auto &config = hsc->get_config();
     assert(hsc != nullptr);
     std::vector<promise_t> pms;
-    if (cert_pblk)
-        pms.push_back(cert_pblk->verify(config, vpool));
-    else if (blk != hsc->get_genesis())
-        return promise_t([](promise_t &pm) { pm.resolve(false); });
 
     for (auto &s: *status_cert)
         pms.push_back(s.verify(vpool));
