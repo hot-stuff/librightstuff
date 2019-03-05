@@ -36,26 +36,22 @@ struct Blame;
 struct BlameNotify;
 struct Finality;
 
-// TODO: optimize the repr of Status
-using status_cert_t = salticidae::BoxObj<std::vector<Notify>>;
-
 /** Abstraction for HotStuff protocol state machine (without network implementation). */
 class HotStuffCore {
     block_t b0;                                  /** the genesis block */
     /* === state variables === */
     /** block containing the QC for the highest block having one */
-    block_t hqc;
+    std::pair<block_t, quorum_cert_bt> hqc;
     block_t bexec;                            /**< last executed block */
     uint32_t vheight;          /**< height of the block last voted for */
     uint32_t nheight;          /**< height of the block last notified for */
     uint32_t view;             /**< the current view number */
     /* Q: does the proposer retry the same block in a new view? */
-    status_cert_t status_cert; /**< status certificate */
     /* === only valid for the current view === */
     bool progress; /**< whether heard a proposal in the current view: this->view */
     bool view_trans; /**< whether the replica is in-between the views */
-    std::unordered_map<uint32_t, std::vector<block_t>> proposals;
-    int32_t conflict_idx;
+    std::unordered_map<uint32_t, std::unordered_set<block_t>> proposals;
+    std::unordered_map<block_t, bool> finished_propose;
     quorum_cert_bt blame_qc;
     std::unordered_set<ReplicaID> blamed;
 
@@ -78,7 +74,7 @@ class HotStuffCore {
     bool update_hqc(const block_t &_hqc);
     bool update(const uint256_t &bqc_hash);
     void on_hqc_update();
-    void broadcast_vote(const block_t &blk);
+    void _vote(const block_t &blk);
     void on_qc_finish(const block_t &blk);
     void on_propose_(const Proposal &prop);
     void on_receive_proposal_(const Proposal &prop);
@@ -148,7 +144,6 @@ class HotStuffCore {
      * itself. */
     virtual void do_broadcast_proposal(const Proposal &prop) = 0;
     virtual void do_broadcast_vote(const Vote &vote) = 0;
-    virtual void do_broadcast_notify(const Notify &notify) = 0;
     virtual void do_broadcast_blame(const Blame &blame) = 0;
     virtual void do_broadcast_blamenotify(const BlameNotify &bn) = 0;
     virtual void set_commit_timer(const block_t &blk, double t_sec) = 0;
@@ -213,52 +208,35 @@ struct Proposal: public Serializable {
     ReplicaID proposer;
     /** block being proposed */
     block_t blk;
-    /** optional status messages (S) */
-    status_cert_t status_cert;
-
     /** handle of the core object to allow polymorphism. The user should use
      * a pointer to the object of the class derived from HotStuffCore */
     HotStuffCore *hsc;
 
-    Proposal(): blk(nullptr), status_cert(nullptr), hsc(nullptr) {}
+    Proposal(): blk(nullptr), hsc(nullptr) {}
     Proposal(ReplicaID proposer,
             const block_t &blk,
-            status_cert_t &&status_cert,
             HotStuffCore *hsc):
         proposer(proposer),
         blk(blk),
-        status_cert(std::move(status_cert)),
         hsc(hsc) {}
 
     Proposal(const Proposal &other):
         proposer(other.proposer),
         blk(other.blk),
-        status_cert(other.status_cert ? new std::vector(*other.status_cert) : nullptr),
         hsc(other.hsc) {}
 
     void serialize(DataStream &s) const override {
         s << proposer
           << *blk;
-
-        if (status_cert)
-        {
-            s << (uint8_t)1;
-            for (const auto &v: *status_cert) s << v;
-        }
-        else
-            s << (uint8_t)0;
     }
 
     inline void unserialize(DataStream &s) override;
-
-    promise_t verify(VeriPool &vpool) const;
 
     operator std::string () const {
         DataStream s;
         s << "<proposal "
           << "rid=" << std::to_string(proposer) << " "
-          << "blk=" << get_hex10(blk->get_hash()) << " "
-          << "status=" << (status_cert ? "yes" : "no") << ">";
+          << "blk=" << get_hex10(blk->get_hash()) << ">";
         return std::move(s);
     }
 };
@@ -444,43 +422,60 @@ struct Blame: public Serializable {
 
 struct BlameNotify: public Serializable {
     uint32_t view;
+    uint256_t hqc_hash;
+    quorum_cert_bt hqc_qc;
     quorum_cert_bt qc;
     
     /** handle of the core object to allow polymorphism */
     HotStuffCore *hsc;
 
-    BlameNotify(): qc(nullptr), hsc(nullptr) {}
+    BlameNotify(): hqc_qc(nullptr), qc(nullptr), hsc(nullptr) {}
     BlameNotify(uint32_t view,
+                const uint256_t &hqc_hash,
+                quorum_cert_bt &&hqc_qc,
                 quorum_cert_bt &&qc,
                 HotStuffCore *hsc):
         view(view),
+        hqc_hash(hqc_hash),
+        hqc_qc(hqc_qc),
         qc(std::move(qc)), hsc(hsc) {}
 
     BlameNotify(const BlameNotify &other):
         view(other.view),
+        hqc_hash(other.hqc_hash),
+        hqc_qc(other.hqc_qc ? other.hqc_qc->clone() : nullptr),
         qc(other.qc ? other.qc->clone() : nullptr), hsc(other.hsc) {}
 
     BlameNotify(BlameNotify &&other) = default;
     
     void serialize(DataStream &s) const override {
-        s << view << *qc;
+        s << view << hqc_hash << *hqc_qc << *qc;
     }
 
     void unserialize(DataStream &s) override {
-        s >> view;
+        s >> view >> hqc_hash;
+        hqc_qc = hsc->parse_quorum_cert(s);
         qc = hsc->parse_quorum_cert(s);
     }
 
     bool verify() const {
         assert(hsc != nullptr);
         return qc->verify(hsc->get_config()) &&
-            qc->get_blk_hash() == Blame::proof_text_hash(view);
+            qc->get_blk_hash() == Blame::proof_text_hash(view) &&
+            hqc_qc->get_blk_hash() == Vote::proof_text_hash(hqc_hash);
     }
 
     promise_t verify(VeriPool &vpool) const {
         assert(hsc != nullptr);
-        return qc->verify(hsc->get_config(), vpool).then([this](bool result) {
-            return result && qc->get_blk_hash() == Blame::proof_text_hash(view);
+        if (!qc->get_blk_hash() == Blame::proof_text_hash(view) ||
+            !hqc_qc->get_blk_hash() == Vote::proof_text_hash(hqc_hash))
+            return promise_t([](promise_t &){ return false; });
+        promise::all(std::vector<promise_t>{
+            qc->verify(hsc->get_config(), vpool),
+            hqc_qc->verify(hsc->get_config(), vpool),
+        }).then([](const promise::values_t &values) {
+            return promise::any_cast<bool>(values[0]) &&
+                promise::any_cast<bool>(values[1]);
         });
     }
 
@@ -499,36 +494,7 @@ inline void Proposal::unserialize(DataStream &s) {
     Block _blk;
     _blk.unserialize(s, hsc);
     blk = hsc->storage->add_blk(std::move(_blk), hsc->get_config());
-    s >> flag;
-    if (flag)
-    {
-        auto ns = hsc->get_config().nmajority;
-        auto status_cert = status_cert_t(new std::vector<Notify>());
-        status_cert->resize(ns);
-        for (auto &v: *status_cert) s >> v;
-    }
 }
-
-inline promise_t Proposal::verify(VeriPool &vpool) const {
-    auto &config = hsc->get_config();
-    assert(hsc != nullptr);
-    std::vector<promise_t> pms;
-
-    for (auto &s: *status_cert)
-        pms.push_back(s.verify(vpool));
-    return promise::all(pms).then([this](const promise::values_t values) {
-        bool result = cert_pblk->get_blk_hash() ==
-            Vote::proof_text_hash(blk->get_parent_hashes()[0]);
-        if (!result) return false;
-        for (auto &v: values)
-        {
-            auto r = promise::any_cast<bool>(v);
-            if (!(result &= r)) return false;
-        }
-        return true;
-    });
-}
-
 
 struct Finality: public Serializable {
     ReplicaID rid;

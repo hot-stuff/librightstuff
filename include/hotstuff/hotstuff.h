@@ -233,10 +233,6 @@ class HotStuffBase: public HotStuffCore {
         _do_broadcast<Vote, MsgVote>(vote);
     }
 
-    void do_broadcast_notify(const Notify &notify) override {
-        _do_broadcast<Notify, MsgNotify>(notify);
-    }
-
     void do_broadcast_blame(const Blame &blame) override {
         _do_broadcast<Blame, MsgBlame>(blame);
     }
