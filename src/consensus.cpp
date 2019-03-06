@@ -38,7 +38,7 @@ HotStuffCore::HotStuffCore(ReplicaID id,
         vheight(0),
         view(0),
         view_trans(false),
-        conflict_idx(-1),
+        blame_qc(nullptr),
         priv_key(std::move(priv_key)),
         tails{b0},
         neg_vote(false),
@@ -46,7 +46,6 @@ HotStuffCore::HotStuffCore(ReplicaID id,
         storage(new EntityStorage()) {
     storage->add_blk(b0);
     b0->qc_ref = b0;
-    blame_qc = create_quorum_cert(Blame::proof_text_hash(view));
 }
 
 void HotStuffCore::sanity_check_delivered(const block_t &blk) {
@@ -112,8 +111,6 @@ void HotStuffCore::check_commit(const block_t &p) {
     bexec = p;
 }
 
-// TODO: the following two look okay, but needs some scrutiny
-
 bool HotStuffCore::update_hqc(const block_t &_bqc, const quorum_cert_bt &qc) {
     assert(qc->get_blk_hash() == Vote::proof_text_hash(_bqc->get_hash()));
     if (_bqc->height > hqc.first->height)
@@ -121,13 +118,6 @@ bool HotStuffCore::update_hqc(const block_t &_bqc, const quorum_cert_bt &qc) {
         hqc = std::make_pair(_bqc, qc->clone());
         on_hqc_update();
     }
-    return true;
-}
-
-bool HotStuffCore::update(const uint256_t &bqc_hash) {
-    block_t _bqc = get_delivered_blk(bqc_hash);
-    if (_bqc->qc_ref == nullptr) return false;
-    update_hqc(_bqc->qc_ref, _bqc->qc);
     return true;
 }
 
@@ -157,7 +147,6 @@ void HotStuffCore::_blame() {
 
 // i. New-view
 void HotStuffCore::_new_view() {
-    if (view_trans) return; // already in view transition
     blame_qc->compute();
     BlameNotify bn(view,
         hqc.first->get_hash(),
@@ -173,6 +162,11 @@ void HotStuffCore::_new_view() {
 void HotStuffCore::on_propose(const std::vector<uint256_t> &cmds,
                             const std::vector<block_t> &parents,
                             bytearray_t &&extra) {
+    if (view_trans)
+    {
+        LOG_WARN("PaceMaker tries to propose during view transition");
+        return;
+    }
     if (parents.empty())
         throw std::runtime_error("empty parents");
     for (const auto &_: parents) tails.erase(_);
@@ -209,13 +203,13 @@ void HotStuffCore::on_propose(const std::vector<uint256_t> &cmds,
 }
 
 void HotStuffCore::on_receive_proposal(const Proposal &prop) {
-    if (!update(prop.bqc_hash)) return;
+    if (view_trans) return;
     LOG_PROTO("got %s", std::string(prop).c_str());
     block_t bnew = prop.blk;
     sanity_check_delivered(bnew);
+    if (bnew->qc_ref)
+        update_hqc(bnew->qc_ref, bnew->qc);
     bool opinion = false;
-    // TODO: shall we still use vheight?
-
     auto &pslot = proposals[bnew->height];
     if (pslot.size() <= 1)
     {
@@ -223,6 +217,7 @@ void HotStuffCore::on_receive_proposal(const Proposal &prop) {
         if (pslot.size() > 1)
         {
             // TODO: put equivocating blocks in the Blame msg
+            LOG_INFO("conflicting proposal detected, start blaming");
             _blame();
         }
         else opinion = true;
@@ -231,7 +226,7 @@ void HotStuffCore::on_receive_proposal(const Proposal &prop) {
 
     if (opinion)
     {
-        block_t pref = bqc->qc_ref;
+        block_t pref = hqc.first;
         block_t b;
         for (b = bnew;
             b->height > pref->height;
@@ -239,7 +234,7 @@ void HotStuffCore::on_receive_proposal(const Proposal &prop) {
         if (b == pref) /* on the same branch */
             vheight = bnew->height;
         else
-            opinion = true;
+            opinion = false;
     }
     LOG_PROTO("now state: %s", std::string(*this).c_str());
     if (bnew->qc_ref)
@@ -249,9 +244,7 @@ void HotStuffCore::on_receive_proposal(const Proposal &prop) {
     if (opinion) _vote(bnew);
 }
 
-// TODO: impl correct blame handler
 void HotStuffCore::on_receive_vote(const Vote &vote) {
-    if (!update(vote.bqc_hash)) return;
     LOG_PROTO("got %s", std::string(vote).c_str());
     LOG_PROTO("now state: %s", std::string(*this).c_str());
     block_t blk = get_delivered_blk(vote.blk_hash);
@@ -293,6 +286,7 @@ void HotStuffCore::on_receive_vote(const Vote &vote) {
 //}
 
 void HotStuffCore::on_receive_blame(const Blame &blame) {
+    if (view_trans) return; // already in view transition
     size_t qsize = blamed.size();
     if (qsize >= config.nmajority) return;
     if (!blamed.insert(blame.blamer).second)
@@ -306,11 +300,18 @@ void HotStuffCore::on_receive_blame(const Blame &blame) {
         _new_view();
 }
 
-void HotStuffCore::on_receive_blamenotify(const BlameNotify &bn) { _new_view(); }
+void HotStuffCore::on_receive_blamenotify(const BlameNotify &bn) {
+    if (view_trans) return;
+    blame_qc = bn.qc->clone();
+    _new_view();
+}
 
 void HotStuffCore::on_commit_timeout(const block_t &blk) { check_commit(blk); }
 
-void HotStuffCore::on_blame_timeout() { _blame(); }
+void HotStuffCore::on_blame_timeout() {
+    LOG_INFO("no progress, start blaming");
+    _blame();
+}
 
 void HotStuffCore::on_viewtrans_timeout() {
     // view change
@@ -324,6 +325,11 @@ void HotStuffCore::on_viewtrans_timeout() {
 }
 
 /*** end HotStuff protocol logic ***/
+void HotStuffCore::on_init(uint32_t nfaulty, double delta) {
+    config.nmajority = nfaulty + 1;
+    config.delta = delta;
+    blame_qc = create_quorum_cert(Blame::proof_text_hash(view));
+}
 
 void HotStuffCore::prune(uint32_t staleness) {
     block_t start;
@@ -389,7 +395,7 @@ promise_t HotStuffCore::async_wait_receive_proposal() {
 
 promise_t HotStuffCore::async_bqc_update() {
     return bqc_update_waiting.then([this]() {
-        return bqc;
+        return hqc.first;
     });
 }
 
@@ -414,8 +420,8 @@ void HotStuffCore::on_hqc_update() {
 HotStuffCore::operator std::string () const {
     DataStream s;
     s << "<hotstuff "
-      << "hqc.qc_ref=" << get_hex10(hqc->qc_ref->get_hash()) << " "
-      << "hqc.qc_ref.height=" << std::to_string(bqc->qc_ref->height) << " "
+      << "hqc.qc_ref=" << get_hex10(hqc.first->qc_ref->get_hash()) << " "
+      << "hqc.qc_ref.height=" << std::to_string(hqc.first->height) << " "
       << "bexec=" << get_hex10(bexec->get_hash()) << " "
       << "vheight=" << std::to_string(vheight) << " "
       << "view=" << std::to_string(view) << " "

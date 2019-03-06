@@ -284,20 +284,20 @@ void HotStuffBase::vote_handler(MsgVote &&msg, const Net::conn_t &conn) {
     });
 }
 
-void HotStuffBase::notify_handler(MsgNotify &&msg, const Net::conn_t &conn) {
-    const NetAddr &peer = conn->get_peer();
-    msg.postponed_parse(this);
-    RcObj<Notify> n(new Notify(std::move(msg.inner)));
-    promise::all(std::vector<promise_t>{
-        async_deliver_blk(n->blk_hash, peer),
-        n->verify(vpool)
-    }).then([this, n, peer](const promise::values_t values) {
-        if (!promise::any_cast<bool>(values[1]))
-            LOG_WARN("invalid notify message from %s", std::string(peer).c_str());
-        else
-            on_receive_notify(*n);
-    });
-}
+//void HotStuffBase::notify_handler(MsgNotify &&msg, const Net::conn_t &conn) {
+//    const NetAddr &peer = conn->get_peer();
+//    msg.postponed_parse(this);
+//    RcObj<Notify> n(new Notify(std::move(msg.inner)));
+//    promise::all(std::vector<promise_t>{
+//        async_deliver_blk(n->blk_hash, peer),
+//        n->verify(vpool)
+//    }).then([this, n, peer](const promise::values_t values) {
+//        if (!promise::any_cast<bool>(values[1]))
+//            LOG_WARN("invalid notify message from %s", std::string(peer).c_str());
+//        else
+//            on_receive_notify(*n);
+//    });
+//}
 
 void HotStuffBase::blame_handler(MsgBlame &&msg, const Net::conn_t &conn) {
     const NetAddr &peer = conn->get_peer();
@@ -355,7 +355,7 @@ void HotStuffBase::stop_blame_timer() {
 
 void HotStuffBase::set_viewtrans_timer(double t_sec) {
     viewtrans_timer = TimerEvent(ec, [this](TimerEvent &) {
-        on_transview_timeout();
+        on_viewtrans_timeout();
         stop_viewtrans_timer();
     });
     viewtrans_timer.add(t_sec);
@@ -478,7 +478,7 @@ HotStuffBase::HotStuffBase(uint32_t blk_size,
     /* register the handlers for msg from replicas */
     pn.reg_handler(salticidae::generic_bind(&HotStuffBase::propose_handler, this, _1, _2));
     pn.reg_handler(salticidae::generic_bind(&HotStuffBase::vote_handler, this, _1, _2));
-    pn.reg_handler(salticidae::generic_bind(&HotStuffBase::notify_handler, this, _1, _2));
+    //pn.reg_handler(salticidae::generic_bind(&HotStuffBase::notify_handler, this, _1, _2));
     pn.reg_handler(salticidae::generic_bind(&HotStuffBase::blame_handler, this, _1, _2));
     pn.reg_handler(salticidae::generic_bind(&HotStuffBase::blamenotify_handler, this, _1, _2));
     pn.reg_handler(salticidae::generic_bind(&HotStuffBase::req_blk_handler, this, _1, _2));

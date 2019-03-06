@@ -71,13 +71,14 @@ class HotStuffCore {
     block_t get_delivered_blk(const uint256_t &blk_hash);
     void sanity_check_delivered(const block_t &blk);
     void check_commit(const block_t &_bqc);
-    bool update_hqc(const block_t &_hqc);
-    bool update(const uint256_t &bqc_hash);
+    bool update_hqc(const block_t &_hqc, const quorum_cert_bt &qc);
     void on_hqc_update();
-    void _vote(const block_t &blk);
     void on_qc_finish(const block_t &blk);
     void on_propose_(const Proposal &prop);
     void on_receive_proposal_(const Proposal &prop);
+    void _vote(const block_t &blk);
+    void _blame();
+    void _new_view();
 
     protected:
     ReplicaID id;                  /**< identity of the replica itself */
@@ -95,10 +96,7 @@ class HotStuffCore {
 
     /** Call to initialize the protocol, should be called once before all other
      * functions. */
-    void on_init(uint32_t nfaulty, double delta) {
-        config.nmajority = nfaulty + 1;
-        config.delta = delta;
-    }
+    void on_init(uint32_t nfaulty, double delta);
 
     /* TODO: better name for "delivery" ? */
     /** Call to inform the state machine that a block is ready to be handled.
@@ -147,10 +145,10 @@ class HotStuffCore {
     virtual void do_broadcast_blame(const Blame &blame) = 0;
     virtual void do_broadcast_blamenotify(const BlameNotify &bn) = 0;
     virtual void set_commit_timer(const block_t &blk, double t_sec) = 0;
-    virtual void set_blame_timer(uint32_t view, double t_sec) = 0;
+    virtual void set_blame_timer(double t_sec) = 0;
     virtual void stop_commit_timer(uint32_t height) = 0;
     virtual void stop_commit_timer_all() = 0;
-    virtual void stop_blame_timer(uint32_t view) = 0;
+    virtual void stop_blame_timer() = 0;
     virtual void set_viewtrans_timer(double t_sec) = 0;
     virtual void stop_viewtrans_timer() = 0;
 
@@ -189,7 +187,7 @@ class HotStuffCore {
     /* Other useful functions */
     const block_t &get_genesis() { return b0; }
     // NOTE: this "bqc" is actual "hqc" in Sync HotStuff
-    const block_t &get_bqc() { return hqc; }
+    const block_t &get_bqc() { return hqc.first; }
     const ReplicaConfig &get_config() { return config; }
     ReplicaID get_id() const { return id; }
     const std::set<block_t, BlockHeightCmp> get_tails() const { return tails; }
@@ -437,7 +435,7 @@ struct BlameNotify: public Serializable {
                 HotStuffCore *hsc):
         view(view),
         hqc_hash(hqc_hash),
-        hqc_qc(hqc_qc),
+        hqc_qc(std::move(hqc_qc)),
         qc(std::move(qc)), hsc(hsc) {}
 
     BlameNotify(const BlameNotify &other):
@@ -467,10 +465,10 @@ struct BlameNotify: public Serializable {
 
     promise_t verify(VeriPool &vpool) const {
         assert(hsc != nullptr);
-        if (!qc->get_blk_hash() == Blame::proof_text_hash(view) ||
-            !hqc_qc->get_blk_hash() == Vote::proof_text_hash(hqc_hash))
+        if (qc->get_blk_hash() != Blame::proof_text_hash(view) ||
+            hqc_qc->get_blk_hash() != Vote::proof_text_hash(hqc_hash))
             return promise_t([](promise_t &){ return false; });
-        promise::all(std::vector<promise_t>{
+        return promise::all(std::vector<promise_t>{
             qc->verify(hsc->get_config(), vpool),
             hqc_qc->verify(hsc->get_config(), vpool),
         }).then([](const promise::values_t &values) {
@@ -489,7 +487,6 @@ struct BlameNotify: public Serializable {
 
 inline void Proposal::unserialize(DataStream &s) {
     assert(hsc != nullptr);
-    uint8_t flag;
     s >> proposer;
     Block _blk;
     _blk.unserialize(s, hsc);
