@@ -315,7 +315,11 @@ void HotStuffBase::blamenotify_handler(MsgBlameNotify &&msg, const Net::conn_t &
     const NetAddr &peer = conn->get_peer();
     msg.postponed_parse(this);
     RcObj<BlameNotify> bn(new BlameNotify(std::move(msg.inner)));
-    bn->verify(vpool).then([this, bn, peer](bool result) {
+    promise::all(std::vector<promise_t>{
+        async_deliver_blk(bn->hqc_hash, peer),
+        bn->verify(vpool)
+    }).then([this, bn, peer](promise::values_t values) {
+        auto result = promise::any_cast<bool>(values[1]);
         if (!result)
             LOG_WARN("invalid blamenotify message from %s", std::string(peer).c_str());
         else

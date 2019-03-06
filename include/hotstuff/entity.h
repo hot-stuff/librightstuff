@@ -122,6 +122,7 @@ class Block {
     std::vector<uint256_t> parent_hashes;
     std::vector<uint256_t> cmds;
     quorum_cert_bt qc;
+    uint256_t qc_ref_hash;
     bytearray_t extra;
 
     /* the following fields can be derived from above */
@@ -160,6 +161,7 @@ class Block {
             parent_hashes(get_hashes(parents)),
             cmds(cmds),
             qc(std::move(qc)),
+            qc_ref_hash(qc_ref ? qc_ref->get_hash() : uint256_t()),
             extra(std::move(extra)),
             hash(salticidae::get_hash(*this)),
             parents(parents),
@@ -188,12 +190,16 @@ class Block {
     const uint256_t &get_hash() const { return hash; }
 
     bool verify(const ReplicaConfig &config) const {
-        if (qc && !qc->verify(config)) return false;
+        if (qc && (!qc->verify(config) ||
+                    qc->get_blk_hash() != qc_ref_hash)) return false;
         return true;
     }
 
     promise_t verify(const ReplicaConfig &config, VeriPool &vpool) const {
-        return (qc ? qc->verify(config, vpool) :
+        return (qc ? 
+            (qc->get_blk_hash() != qc_ref_hash ?
+                promise_t([](promise_t &pm) { pm.resolve(false); }) :
+                qc->verify(config, vpool)) :
         promise_t([](promise_t &pm) { pm.resolve(true); }));
     }
 

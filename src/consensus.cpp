@@ -73,7 +73,7 @@ bool HotStuffCore::on_deliver_blk(const block_t &blk) {
 
     if (blk->qc)
     {
-        block_t _blk = storage->find_blk(blk->qc->get_blk_hash());
+        block_t _blk = storage->find_blk(blk->qc_ref_hash);
         if (_blk == nullptr)
             throw std::runtime_error("block referred by qc not fetched");
         blk->qc_ref = std::move(_blk);
@@ -152,10 +152,10 @@ void HotStuffCore::_new_view() {
         hqc.first->get_hash(),
         hqc.second->clone(),
         blame_qc->clone(), this);
+    view_trans = true;
     on_receive_blamenotify(bn);
     do_broadcast_blamenotify(bn);
     stop_commit_timer_all();
-    view_trans = true;
     set_viewtrans_timer(2 * config.delta);
 }
 
@@ -196,6 +196,7 @@ void HotStuffCore::on_propose(const std::vector<uint256_t> &cmds,
     if (bnew->height <= vheight)
         throw std::runtime_error("new block should be higher than vheight");
     vheight = bnew->height;
+    finished_propose[bnew] = true;
     _vote(bnew);
     on_propose_(prop);
     /* boradcast to other replicas */
@@ -252,8 +253,8 @@ void HotStuffCore::on_receive_vote(const Vote &vote) {
     {
         // FIXME: fill voter as proposer as a quickfix here, may be inaccurate
         // for some PaceMakers
-        on_receive_proposal(Proposal(vote.voter, blk, nullptr));
         finished_propose[blk] = true;
+        on_receive_proposal(Proposal(vote.voter, blk, nullptr));
     }
     size_t qsize = blk->voted.size();
     if (qsize >= config.nmajority) return;
@@ -265,7 +266,7 @@ void HotStuffCore::on_receive_vote(const Vote &vote) {
     auto &qc = blk->self_qc;
     if (qc == nullptr)
     {
-        LOG_WARN("vote for block not proposed by itself");
+        //LOG_WARN("vote for block not proposed by itself");
         qc = create_quorum_cert(Vote::proof_text_hash(blk->get_hash()));
     }
     qc->add_part(vote.voter, *vote.cert);
@@ -420,7 +421,7 @@ void HotStuffCore::on_hqc_update() {
 HotStuffCore::operator std::string () const {
     DataStream s;
     s << "<hotstuff "
-      << "hqc.qc_ref=" << get_hex10(hqc.first->qc_ref->get_hash()) << " "
+      << "hqc.qc_ref=" << get_hex10(hqc.first->get_hash()) << " "
       << "hqc.qc_ref.height=" << std::to_string(hqc.first->height) << " "
       << "bexec=" << get_hex10(bexec->get_hash()) << " "
       << "vheight=" << std::to_string(vheight) << " "
