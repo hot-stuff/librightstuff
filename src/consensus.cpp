@@ -408,7 +408,7 @@ promise_t HotStuffCore::async_wait_view_change() {
 }
 
 promise_t HotStuffCore::async_wait_view_trans() {
-    return view_change_waiting;
+    return view_trans_waiting;
 }
 
 void HotStuffCore::on_propose_(const Proposal &prop) {

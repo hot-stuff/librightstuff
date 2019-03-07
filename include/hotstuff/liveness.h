@@ -174,18 +174,20 @@ class PMWaitQC: public virtual PaceMaker {
         ReplicaID proposer = get_proposer();
         if (proposer != hsc->get_id())
         {
+            HOTSTUFF_LOG_INFO("%d drop %zu beats", proposer, pending_beats.size());
             while (!pending_beats.empty())
             {
                 auto pm = pending_beats.front();
                 pending_beats.pop();
                 pm.resolve(proposer);
             }
-            HOTSTUFF_LOG_INFO("drop beats", pending_beats.size());
+            last_proposed = hsc->get_genesis();
             locked = false;
         }
         else
         {
             HOTSTUFF_LOG_INFO("resume %zu beats", pending_beats.size());
+            last_proposed = hsc->get_genesis();
             locked = false;
             schedule_next();
         }
@@ -228,13 +230,13 @@ struct PaceMakerDummy: public PMAllParents, public PMWaitQC {
 
 /** Naive PaceMaker where everyone can be a proposer at any moment. */
 struct PaceMakerRR: public PaceMakerDummy {
-    ReplicaID proposer;
+    ReplicaID init_proposer;
     promise_t pm_view_change;
     promise_t pm_view_trans;
 
     void view_change() {
         pm_view_change.reject();
-        pm_view_change = hsc->async_wait_view_change().then([this](uint32_t view) {
+        pm_view_change = hsc->async_wait_view_change().then([this]() {
             PMWaitQC::on_view_change();
             view_change();
         });
@@ -252,21 +254,22 @@ struct PaceMakerRR: public PaceMakerDummy {
     PaceMakerRR(ReplicaID init_proposer,
                 int32_t parent_limit):
         PaceMakerDummy(parent_limit),
-        proposer(init_proposer) {}
+        init_proposer(init_proposer) {}
 
     void init(HotStuffCore *hsc) override {
         PaceMakerDummy::init(hsc);
         view_change();
+        view_trans();
     }
     // TODO: use async_wait_view_change to rotate the proposer
 
     ReplicaID get_proposer() override {
-        return proposer;
+        return (init_proposer + hsc->get_view()) % hsc->get_config().nreplicas;
     }
 
     promise_t beat_resp(ReplicaID) override {
         return promise_t([this](promise_t &pm) {
-            pm.resolve(proposer);
+            pm.resolve(get_proposer());
         });
     }
 };

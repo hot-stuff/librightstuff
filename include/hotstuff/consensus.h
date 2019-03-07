@@ -200,6 +200,7 @@ class HotStuffCore {
     const ReplicaConfig &get_config() { return config; }
     ReplicaID get_id() const { return id; }
     const std::set<block_t, BlockHeightCmp> get_tails() const { return tails; }
+    uint32_t get_view() const { return view; }
     operator std::string () const;
     void set_neg_vote(bool _neg_vote) { neg_vote = _neg_vote; }
 };
