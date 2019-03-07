@@ -147,6 +147,7 @@ void HotStuffCore::_blame() {
 
 // i. New-view
 void HotStuffCore::_new_view() {
+    LOG_INFO("preparing new-view");
     blame_qc->compute();
     BlameNotify bn(view,
         hqc.first->get_hash(),
@@ -274,17 +275,14 @@ void HotStuffCore::on_receive_vote(const Vote &vote) {
     {
         qc->compute();
         update_hqc(blk, qc);
-        // no need to have extra Notify process
-        //Notify notify(vote.blk_hash, qc->clone(), this);
-        //on_receive_notify(notify); // deliver to itself
-        //do_broadcast_notify(notify); // notify the others
         on_qc_finish(blk);
     }
 }
 
-// NOTE: Taken care of by BlameNotify
-//void HotStuffCore::on_receive_notify(const Notify &notify) {
-//}
+void HotStuffCore::on_receive_notify(const Notify &notify) {
+    block_t blk = get_delivered_blk(notify.blk_hash);
+    update_hqc(blk, notify.qc);
+}
 
 void HotStuffCore::on_receive_blame(const Blame &blame) {
     if (view_trans) return; // already in view transition
@@ -322,7 +320,11 @@ void HotStuffCore::on_viewtrans_timeout() {
     blame_qc = create_quorum_cert(Blame::proof_text_hash(view));
     blamed.clear();
     set_blame_timer(3 * config.delta);
-    // TODO: send hqc to the next leader
+    on_view_change(); // notify the PaceMaker of the view change
+    LOG_INFO("entering view %d", view);
+    // send the highest certified block
+    Notify notify(hqc.first->get_hash(), hqc.second->clone(), this);
+    do_notify(notify);
 }
 
 /*** end HotStuff protocol logic ***/
@@ -400,6 +402,10 @@ promise_t HotStuffCore::async_bqc_update() {
     });
 }
 
+promise_t HotStuffCore::async_wait_view_change() {
+    return view_change_waiting.then([this]() { return view; });
+}
+
 void HotStuffCore::on_propose_(const Proposal &prop) {
     auto t = std::move(propose_waiting);
     propose_waiting = promise_t();
@@ -415,6 +421,12 @@ void HotStuffCore::on_receive_proposal_(const Proposal &prop) {
 void HotStuffCore::on_hqc_update() {
     auto t = std::move(bqc_update_waiting);
     bqc_update_waiting = promise_t();
+    t.resolve();
+}
+
+void HotStuffCore::on_view_change() {
+    auto t = std::move(view_change_waiting);
+    view_change_waiting = promise_t();
     t.resolve();
 }
 

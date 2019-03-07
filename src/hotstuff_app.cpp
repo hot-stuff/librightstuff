@@ -146,7 +146,7 @@ int main(int argc, char **argv) {
     auto opt_client_port = Config::OptValInt::create(-1);
     auto opt_privkey = Config::OptValStr::create();
     auto opt_help = Config::OptValFlag::create(false);
-    auto opt_pace_maker = Config::OptValStr::create("dummy");
+    auto opt_pace_maker = Config::OptValStr::create("rr");
     auto opt_fixed_proposer = Config::OptValInt::create(1);
     auto opt_qc_timeout = Config::OptValDouble::create(0.5);
     auto opt_imp_timeout = Config::OptValDouble::create(11);
@@ -209,12 +209,12 @@ int main(int argc, char **argv) {
     }
     else if (opt_pace_maker->get() == "rr")
     {
-        assert(0);
-        //pmaker = new hotstuff::PaceMakerRR(parent_limit, opt_qc_timeout->get(), ec);
+        pmaker = new hotstuff::PaceMakerRR(opt_fixed_proposer->get(), parent_limit);
     }
     else
     {
-        pmaker = new hotstuff::PaceMakerDummyFixed(opt_fixed_proposer->get(), parent_limit);
+        assert(0);
+        //pmaker = new hotstuff::PaceMakerDummyFixed(opt_fixed_proposer->get(), parent_limit);
     }
 
     papp = new HotStuffApp(opt_blk_size->get(),

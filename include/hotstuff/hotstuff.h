@@ -241,6 +241,15 @@ class HotStuffBase: public HotStuffCore {
         _do_broadcast<BlameNotify, MsgBlameNotify>(bn);
     }
 
+    void do_notify(const Notify &notify) override {
+        MsgNotify m(notify);
+        ReplicaID next_proposer = pmaker->get_proposer();
+        if (next_proposer != get_id())
+            pn.send_msg(m, get_config().get_addr(next_proposer));
+        else
+            on_receive_notify(notify);
+    }
+
     void set_commit_timer(const block_t &blk, double t_sec) override;
     void stop_commit_timer(uint32_t height) override;
     void stop_commit_timer_all() override;
