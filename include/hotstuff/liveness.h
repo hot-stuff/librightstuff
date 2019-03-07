@@ -169,16 +169,26 @@ class PMWaitQC: public virtual PaceMaker {
 
     public:
 
+    void on_view_trans() { locked = true; }
     void on_view_change() {
-        HOTSTUFF_LOG_INFO("clearing %zu pending beats", pending_beats.size());
-        while (!pending_beats.empty())
+        ReplicaID proposer = get_proposer();
+        if (proposer != hsc->get_id())
         {
-            auto pm = pending_beats.front();
-            pm.resolve(get_proposer());
-            pending_beats.pop();
+            while (!pending_beats.empty())
+            {
+                auto pm = pending_beats.front();
+                pending_beats.pop();
+                pm.resolve(proposer);
+            }
+            HOTSTUFF_LOG_INFO("drop beats", pending_beats.size());
+            locked = false;
         }
-        pm_qc_finish.reject();
-        init();
+        else
+        {
+            HOTSTUFF_LOG_INFO("resume %zu beats", pending_beats.size());
+            locked = false;
+            schedule_next();
+        }
     }
 
     void init() {
@@ -220,12 +230,21 @@ struct PaceMakerDummy: public PMAllParents, public PMWaitQC {
 struct PaceMakerRR: public PaceMakerDummy {
     ReplicaID proposer;
     promise_t pm_view_change;
+    promise_t pm_view_trans;
 
     void view_change() {
         pm_view_change.reject();
         pm_view_change = hsc->async_wait_view_change().then([this](uint32_t view) {
             PMWaitQC::on_view_change();
             view_change();
+        });
+    }
+
+    void view_trans() {
+        pm_view_trans.reject();
+        pm_view_trans = hsc->async_wait_view_trans().then([this]() {
+            PMWaitQC::on_view_trans();
+            view_trans();
         });
     }
 

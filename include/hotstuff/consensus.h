@@ -65,6 +65,7 @@ class HotStuffCore {
     promise_t receive_proposal_waiting;
     promise_t bqc_update_waiting;
     promise_t view_change_waiting;
+    promise_t view_trans_waiting;
     /* == feature switches == */
     /** always vote negatively, useful for some PaceMakers */
     bool neg_vote;
@@ -78,6 +79,7 @@ class HotStuffCore {
     void on_propose_(const Proposal &prop);
     void on_receive_proposal_(const Proposal &prop);
     void on_view_change();
+    void on_view_trans();
     void _vote(const block_t &blk);
     void _blame();
     void _new_view();
@@ -188,6 +190,8 @@ class HotStuffCore {
     promise_t async_bqc_update();
     /** Get a promise resolved after a view change. */
     promise_t async_wait_view_change();
+    /** Get a promise resolved before a view change. */
+    promise_t async_wait_view_trans();
 
     /* Other useful functions */
     const block_t &get_genesis() { return b0; }

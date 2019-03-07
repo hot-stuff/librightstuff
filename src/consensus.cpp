@@ -154,6 +154,7 @@ void HotStuffCore::_new_view() {
         hqc.second->clone(),
         blame_qc->clone(), this);
     view_trans = true;
+    on_view_trans();
     on_receive_blamenotify(bn);
     do_broadcast_blamenotify(bn);
     stop_commit_timer_all();
@@ -406,6 +407,10 @@ promise_t HotStuffCore::async_wait_view_change() {
     return view_change_waiting.then([this]() { return view; });
 }
 
+promise_t HotStuffCore::async_wait_view_trans() {
+    return view_change_waiting;
+}
+
 void HotStuffCore::on_propose_(const Proposal &prop) {
     auto t = std::move(propose_waiting);
     propose_waiting = promise_t();
@@ -427,6 +432,12 @@ void HotStuffCore::on_hqc_update() {
 void HotStuffCore::on_view_change() {
     auto t = std::move(view_change_waiting);
     view_change_waiting = promise_t();
+    t.resolve();
+}
+
+void HotStuffCore::on_view_trans() {
+    auto t = std::move(view_trans_waiting);
+    view_trans_waiting = promise_t();
     t.resolve();
 }
 
