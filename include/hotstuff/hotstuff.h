@@ -283,7 +283,7 @@ class HotStuffBase: public HotStuffCore {
     /* Submit the command to be decided. */
     promise_t exec_command(uint256_t cmd);
     void add_replica(ReplicaID idx, const NetAddr &addr, pubkey_bt &&pub_key);
-    void start(bool ec_loop = false, double delta = 1);
+    void start(double delta, bool ec_loop = false);
 
     size_t size() const { return peers.size(); }
     PaceMaker &get_pace_maker() { return *pmaker; }

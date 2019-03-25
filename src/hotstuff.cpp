@@ -508,7 +508,7 @@ void HotStuffBase::do_decide(Finality &&fin) {
 
 HotStuffBase::~HotStuffBase() {}
 
-void HotStuffBase::start(bool ec_loop, double delta) {
+void HotStuffBase::start(double delta, bool ec_loop) {
     /* ((n - 1) + 1 - 1) / 2 */
     uint32_t nfaulty = peers.size() / 2;
     if (nfaulty == 0)
