@@ -34,31 +34,31 @@ void MsgPropose::postponed_parse(HotStuffCore *hsc) {
 }
 
 const opcode_t MsgVote::opcode;
-MsgVote::MsgVote(const Vote &inner) { serialized << inner; }
+MsgVote::MsgVote(const Vote &vote) { serialized << vote; }
 void MsgVote::postponed_parse(HotStuffCore *hsc) {
-    inner.hsc = hsc;
-    serialized >> inner;
+    vote.hsc = hsc;
+    serialized >> vote;
 }
 
 const opcode_t MsgNotify::opcode;
-MsgNotify::MsgNotify(const Notify &inner) { serialized << inner; }
+MsgNotify::MsgNotify(const Notify &notify) { serialized << notify; }
 void MsgNotify::postponed_parse(HotStuffCore *hsc) {
-    inner.hsc = hsc;
-    serialized >> inner;
+    notify.hsc = hsc;
+    serialized >> notify;
 }
 
 const opcode_t MsgBlame::opcode;
-MsgBlame::MsgBlame(const Blame &inner) { serialized << inner; }
+MsgBlame::MsgBlame(const Blame &blame) { serialized << blame; }
 void MsgBlame::postponed_parse(HotStuffCore *hsc) {
-    inner.hsc = hsc;
-    serialized >> inner;
+    blame.hsc = hsc;
+    serialized >> blame;
 }
 
 const opcode_t MsgBlameNotify::opcode;
-MsgBlameNotify::MsgBlameNotify(const BlameNotify &inner) { serialized << inner; }
+MsgBlameNotify::MsgBlameNotify(const BlameNotify &bn) { serialized << bn; }
 void MsgBlameNotify::postponed_parse(HotStuffCore *hsc) {
-    inner.hsc = hsc;
-    serialized >> inner;
+    bn.hsc = hsc;
+    serialized >> bn;
 }
 
 const opcode_t MsgReqBlock::opcode;
@@ -248,9 +248,13 @@ promise_t HotStuffBase::async_deliver_blk(const uint256_t &blk_hash,
     async_fetch_blk(blk_hash, &replica_id).then([this, replica_id](block_t blk) {
         /* qc_ref should be fetched */
         std::vector<promise_t> pms;
+        const auto &qc = blk->get_qc();
+        if (qc)
+            pms.push_back(async_fetch_blk(blk->get_qc_ref_hash(), &replica_id));
         /* the parents should be delivered */
         for (const auto &phash: blk->get_parent_hashes())
             pms.push_back(async_deliver_blk(phash, replica_id));
+        pms.push_back(blk->verify(get_config(), vpool));
         promise::all(pms).then([this, blk]() {
             on_deliver_blk(blk);
         });
@@ -272,7 +276,7 @@ void HotStuffBase::propose_handler(MsgPropose &&msg, const Net::conn_t &conn) {
 void HotStuffBase::vote_handler(MsgVote &&msg, const Net::conn_t &conn) {
     const NetAddr &peer = conn->get_peer();
     msg.postponed_parse(this);
-    RcObj<Vote> v(new Vote(std::move(msg.inner)));
+    RcObj<Vote> v(new Vote(std::move(msg.vote)));
     promise::all(std::vector<promise_t>{
         async_deliver_blk(v->blk_hash, peer),
         v->verify(vpool)
@@ -287,7 +291,7 @@ void HotStuffBase::vote_handler(MsgVote &&msg, const Net::conn_t &conn) {
 void HotStuffBase::notify_handler(MsgNotify &&msg, const Net::conn_t &conn) {
     const NetAddr &peer = conn->get_peer();
     msg.postponed_parse(this);
-    RcObj<Notify> n(new Notify(std::move(msg.inner)));
+    RcObj<Notify> n(new Notify(std::move(msg.notify)));
     promise::all(std::vector<promise_t>{
         async_deliver_blk(n->blk_hash, peer),
         n->verify(vpool)
@@ -302,7 +306,7 @@ void HotStuffBase::notify_handler(MsgNotify &&msg, const Net::conn_t &conn) {
 void HotStuffBase::blame_handler(MsgBlame &&msg, const Net::conn_t &conn) {
     const NetAddr &peer = conn->get_peer();
     msg.postponed_parse(this);
-    RcObj<Blame> b(new Blame(std::move(msg.inner)));
+    RcObj<Blame> b(new Blame(std::move(msg.blame)));
     b->verify(vpool).then([this, b, peer](bool result) {
         if (!result)
             LOG_WARN("invalid blame message from %s", std::string(peer).c_str());
@@ -314,7 +318,7 @@ void HotStuffBase::blame_handler(MsgBlame &&msg, const Net::conn_t &conn) {
 void HotStuffBase::blamenotify_handler(MsgBlameNotify &&msg, const Net::conn_t &conn) {
     const NetAddr &peer = conn->get_peer();
     msg.postponed_parse(this);
-    RcObj<BlameNotify> bn(new BlameNotify(std::move(msg.inner)));
+    RcObj<BlameNotify> bn(new BlameNotify(std::move(msg.bn)));
     promise::all(std::vector<promise_t>{
         async_deliver_blk(bn->hqc_hash, peer),
         bn->verify(vpool)

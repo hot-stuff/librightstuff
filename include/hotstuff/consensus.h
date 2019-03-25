@@ -287,7 +287,7 @@ struct Vote: public Serializable {
         cert = hsc->parse_part_cert(s);
     }
 
-    static uint256_t proof_text_hash(const uint256_t &blk_hash) {
+    static uint256_t proof_obj_hash(const uint256_t &blk_hash) {
         DataStream p;
         p << (uint8_t)ProofType::VOTE << blk_hash;
         return p.get_hash();
@@ -296,13 +296,13 @@ struct Vote: public Serializable {
     bool verify() const {
         assert(hsc != nullptr);
         return cert->verify(hsc->get_config().get_pubkey(voter)) &&
-                cert->get_blk_hash() == proof_text_hash(blk_hash);
+                cert->get_obj_hash() == proof_obj_hash(blk_hash);
     }
 
     promise_t verify(VeriPool &vpool) const {
         assert(hsc != nullptr);
         return cert->verify(hsc->get_config().get_pubkey(voter), vpool).then([this](bool result) {
-            return result && cert->get_blk_hash() == proof_text_hash(blk_hash);
+            return result && cert->get_obj_hash() == proof_obj_hash(blk_hash);
         });
     }
 
@@ -347,13 +347,13 @@ struct Notify: public Serializable {
     bool verify() const {
         assert(hsc != nullptr);
         return qc->verify(hsc->get_config()) &&
-            qc->get_blk_hash() == Vote::proof_text_hash(blk_hash);
+            qc->get_obj_hash() == Vote::proof_obj_hash(blk_hash);
     }
 
     promise_t verify(VeriPool &vpool) const {
         assert(hsc != nullptr);
         return qc->verify(hsc->get_config(), vpool).then([this](bool result) {
-            return result && qc->get_blk_hash() == Vote::proof_text_hash(blk_hash);
+            return result && qc->get_obj_hash() == Vote::proof_obj_hash(blk_hash);
         });
     }
 
@@ -400,7 +400,7 @@ struct Blame: public Serializable {
         cert = hsc->parse_part_cert(s);
     }
 
-    static uint256_t proof_text_hash(uint32_t view) {
+    static uint256_t proof_obj_hash(uint32_t view) {
         DataStream p;
         p << (uint8_t)ProofType::BLAME << view;
         return p.get_hash();
@@ -409,13 +409,13 @@ struct Blame: public Serializable {
     bool verify() const {
         assert(hsc != nullptr);
         return cert->verify(hsc->get_config().get_pubkey(blamer)) &&
-                cert->get_blk_hash() == proof_text_hash(view);
+                cert->get_obj_hash() == proof_obj_hash(view);
     }
 
     promise_t verify(VeriPool &vpool) const {
         assert(hsc != nullptr);
         return cert->verify(hsc->get_config().get_pubkey(blamer), vpool).then([this](bool result) {
-            return result && cert->get_blk_hash() == proof_text_hash(view);
+            return result && cert->get_obj_hash() == proof_obj_hash(view);
         });
     }
 
@@ -469,14 +469,14 @@ struct BlameNotify: public Serializable {
     bool verify() const {
         assert(hsc != nullptr);
         return qc->verify(hsc->get_config()) &&
-            qc->get_blk_hash() == Blame::proof_text_hash(view) &&
-            hqc_qc->get_blk_hash() == Vote::proof_text_hash(hqc_hash);
+            qc->get_obj_hash() == Blame::proof_obj_hash(view) &&
+            hqc_qc->get_obj_hash() == Vote::proof_obj_hash(hqc_hash);
     }
 
     promise_t verify(VeriPool &vpool) const {
         assert(hsc != nullptr);
-        if (qc->get_blk_hash() != Blame::proof_text_hash(view) ||
-            hqc_qc->get_blk_hash() != Vote::proof_text_hash(hqc_hash))
+        if (qc->get_obj_hash() != Blame::proof_obj_hash(view) ||
+            hqc_qc->get_obj_hash() != Vote::proof_obj_hash(hqc_hash))
             return promise_t([](promise_t &){ return false; });
         return promise::all(std::vector<promise_t>{
             qc->verify(hsc->get_config(), vpool),

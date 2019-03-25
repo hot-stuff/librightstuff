@@ -54,7 +54,7 @@ struct MsgPropose {
 struct MsgVote {
     static const opcode_t opcode = 0x1;
     DataStream serialized;
-    Vote inner;
+    Vote vote;
     MsgVote(const Vote &);
     MsgVote(DataStream &&s): serialized(std::move(s)) {}
     void postponed_parse(HotStuffCore *hsc);
@@ -63,7 +63,7 @@ struct MsgVote {
 struct MsgNotify {
     static const opcode_t opcode = 0x4;
     DataStream serialized;
-    Notify inner;
+    Notify notify;
     MsgNotify(const Notify &);
     MsgNotify(DataStream &&s): serialized(std::move(s)) {}
     void postponed_parse(HotStuffCore *hsc);
@@ -72,7 +72,7 @@ struct MsgNotify {
 struct MsgBlame {
     static const opcode_t opcode = 0x5;
     DataStream serialized;
-    Blame inner;
+    Blame blame;
     MsgBlame(const Blame &);
     MsgBlame(DataStream &&s): serialized(std::move(s)) {}
     void postponed_parse(HotStuffCore *hsc);
@@ -81,7 +81,7 @@ struct MsgBlame {
 struct MsgBlameNotify {
     static const opcode_t opcode = 0x6;
     DataStream serialized;
-    BlameNotify inner;
+    BlameNotify bn;
     MsgBlameNotify(const BlameNotify &);
     MsgBlameNotify(DataStream &&s): serialized(std::move(s)) {}
     void postponed_parse(HotStuffCore *hsc);

@@ -112,7 +112,7 @@ void HotStuffCore::check_commit(const block_t &p) {
 }
 
 bool HotStuffCore::update_hqc(const block_t &_bqc, const quorum_cert_bt &qc) {
-    assert(qc->get_blk_hash() == Vote::proof_text_hash(_bqc->get_hash()));
+    assert(qc->get_obj_hash() == Vote::proof_obj_hash(_bqc->get_hash()));
     if (_bqc->height > hqc.first->height)
     {
         hqc = std::make_pair(_bqc, qc->clone());
@@ -127,7 +127,7 @@ void HotStuffCore::_vote(const block_t &blk) {
     Vote vote(id, blk_hash,
             create_part_cert(
                 *priv_key,
-                Vote::proof_text_hash(blk_hash)), this);
+                Vote::proof_obj_hash(blk_hash)), this);
     on_receive_vote(vote);
     do_broadcast_vote(vote);
     set_commit_timer(blk, 2 * config.delta);
@@ -140,7 +140,7 @@ void HotStuffCore::_blame() {
     Blame blame(id, view,
             create_part_cert(
                 *priv_key,
-                Blame::proof_text_hash(view)), this);
+                Blame::proof_obj_hash(view)), this);
     on_receive_blame(blame);
     do_broadcast_blame(blame);
 }
@@ -190,7 +190,7 @@ void HotStuffCore::on_propose(const std::vector<uint256_t> &cmds,
             nullptr
         ));
     const uint256_t bnew_hash = bnew->get_hash();
-    bnew->self_qc = create_quorum_cert(Vote::proof_text_hash(bnew_hash));
+    bnew->self_qc = create_quorum_cert(Vote::proof_obj_hash(bnew_hash));
     on_deliver_blk(bnew);
     Proposal prop(id, bnew, nullptr);
     LOG_PROTO("propose %s", std::string(*bnew).c_str());
@@ -269,10 +269,10 @@ void HotStuffCore::on_receive_vote(const Vote &vote) {
     if (qc == nullptr)
     {
         //LOG_WARN("vote for block not proposed by itself");
-        qc = create_quorum_cert(Vote::proof_text_hash(blk->get_hash()));
+        qc = create_quorum_cert(Vote::proof_obj_hash(blk->get_hash()));
     }
     qc->add_part(vote.voter, *vote.cert);
-    if (++qsize == config.nmajority)
+    if (qsize + 1 == config.nmajority)
     {
         qc->compute();
         update_hqc(blk, qc);
@@ -318,7 +318,7 @@ void HotStuffCore::on_viewtrans_timeout() {
     view++;
     view_trans = false;
     proposals.clear();
-    blame_qc = create_quorum_cert(Blame::proof_text_hash(view));
+    blame_qc = create_quorum_cert(Blame::proof_obj_hash(view));
     blamed.clear();
     set_blame_timer(3 * config.delta);
     on_view_change(); // notify the PaceMaker of the view change
@@ -332,7 +332,7 @@ void HotStuffCore::on_viewtrans_timeout() {
 void HotStuffCore::on_init(uint32_t nfaulty, double delta) {
     config.nmajority = nfaulty + 1;
     config.delta = delta;
-    blame_qc = create_quorum_cert(Blame::proof_text_hash(view));
+    blame_qc = create_quorum_cert(Blame::proof_obj_hash(view));
 }
 
 void HotStuffCore::prune(uint32_t staleness) {

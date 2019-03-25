@@ -106,7 +106,7 @@ class Command: public Serializable {
     }
 };
 
-using command_t = RcObj<Command>;
+using command_t = ArcObj<Command>;
 
 template<typename Hashable>
 inline static std::vector<uint256_t>
@@ -189,19 +189,8 @@ class Block {
 
     const uint256_t &get_hash() const { return hash; }
 
-    bool verify(const ReplicaConfig &config) const {
-        if (qc && (!qc->verify(config) ||
-                    qc->get_blk_hash() != qc_ref_hash)) return false;
-        return true;
-    }
-
-    promise_t verify(const ReplicaConfig &config, VeriPool &vpool) const {
-        return (qc ? 
-            (qc->get_blk_hash() != qc_ref_hash ?
-                promise_t([](promise_t &pm) { pm.resolve(false); }) :
-                qc->verify(config, vpool)) :
-        promise_t([](promise_t &pm) { pm.resolve(true); }));
-    }
+    bool verify(const ReplicaConfig &config) const;
+    promise_t verify(const ReplicaConfig &config, VeriPool &vpool) const;
 
     int8_t get_decision() const { return decision; }
 
@@ -214,6 +203,8 @@ class Block {
     const block_t &get_qc_ref() const { return qc_ref; }
 
     const bytearray_t &get_extra() const { return extra; }
+
+    const uint256_t &get_qc_ref_hash() const { return qc_ref_hash; }
 
     operator std::string () const {
         DataStream s;
