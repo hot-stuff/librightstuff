@@ -204,20 +204,14 @@ int main(int argc, char **argv) {
 
     auto parent_limit = opt_parent_limit->get();
     hotstuff::pacemaker_bt pmaker;
-    if (opt_pace_maker->get() == "sticky")
+    if (opt_pace_maker->get() == "rr")
     {
-        assert(0);
-        //pmaker = new hotstuff::PaceMakerSticky(parent_limit, opt_qc_timeout->get(), ec);
-    }
-    else if (opt_pace_maker->get() == "rr")
-    {
-        pmaker = new hotstuff::PaceMakerRR(opt_fixed_proposer->get(), parent_limit);
     }
     else
     {
-        assert(0);
-        //pmaker = new hotstuff::PaceMakerDummyFixed(opt_fixed_proposer->get(), parent_limit);
+        HOTSTUFF_LOG_WARN("use rr pacemaker");
     }
+    pmaker = new hotstuff::PaceMakerRR(opt_fixed_proposer->get(), parent_limit);
 
     papp = new HotStuffApp(opt_blk_size->get(),
                         opt_stat_period->get(),
