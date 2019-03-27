@@ -100,12 +100,14 @@ class HotStuffApp: public HotStuff {
 #ifndef HOTSTUFF_ENABLE_BENCHMARK
         HOTSTUFF_LOG_INFO("replicated %s", std::string(fin).c_str());
 #endif
+        /*
         auto it = unconfirmed.find(fin.cmd_hash);
         if (it != unconfirmed.end())
         {
             it->second.resolve(fin);
             unconfirmed.erase(it);
         }
+        */
     }
 
     public:
@@ -119,7 +121,8 @@ class HotStuffApp: public HotStuff {
                 hotstuff::pacemaker_bt pmaker,
                 const EventContext &ec,
                 size_t nworker,
-                const Net::Config &config);
+                const Net::Config &repnet_config,
+                const ClientNetwork<opcode_t>::Config &clinet_config);
 
     void start(double delta);
 };
@@ -151,8 +154,11 @@ int main(int argc, char **argv) {
     auto opt_fixed_proposer = Config::OptValInt::create(1);
     auto opt_qc_timeout = Config::OptValDouble::create(0.5);
     auto opt_imp_timeout = Config::OptValDouble::create(11);
-    auto opt_nworker = Config::OptValInt::create(4);
-    auto opt_netnworker = Config::OptValInt::create(4);
+    auto opt_nworker = Config::OptValInt::create(1);
+    auto opt_repnworker = Config::OptValInt::create(1);
+    auto opt_repburst = Config::OptValInt::create(100);
+    auto opt_clinworker = Config::OptValInt::create(8);
+    auto opt_cliburst = Config::OptValInt::create(1000);
     auto opt_delta = Config::OptValDouble::create(1);
 
     config.add_opt("block-size", opt_blk_size, Config::SET_VAL);
@@ -167,7 +173,10 @@ int main(int argc, char **argv) {
     config.add_opt("qc-timeout", opt_qc_timeout, Config::SET_VAL, 't', "set QC timeout (for sticky)");
     config.add_opt("imp-timeout", opt_imp_timeout, Config::SET_VAL, 'u', "set impeachment timeout (for sticky)");
     config.add_opt("nworker", opt_nworker, Config::SET_VAL, 'n', "the number of threads for verification");
-    config.add_opt("netnworker", opt_nworker, Config::SET_VAL, 'm', "the number of threads for network");
+    config.add_opt("repnworker", opt_repnworker, Config::SET_VAL, 'm', "the number of threads for replica network");
+    config.add_opt("repburst", opt_repburst, Config::SET_VAL, 'b', "");
+    config.add_opt("clinworker", opt_clinworker, Config::SET_VAL, 'M', "the number of threads for client network");
+    config.add_opt("cliburst", opt_cliburst, Config::SET_VAL, 'B', "");
     config.add_opt("delta", opt_delta, Config::SET_VAL, 'd', "maximum network delay");
     config.add_opt("help", opt_help, Config::SWITCH_ON, 'h', "show this help info");
 
@@ -216,8 +225,14 @@ int main(int argc, char **argv) {
     }
     pmaker = new hotstuff::PaceMakerRR(opt_fixed_proposer->get(), parent_limit);
 
-    HotStuffApp::Net::Config netconfig;
-    netconfig.nworker(opt_netnworker->get());
+    HotStuffApp::Net::Config repnet_config;
+    ClientNetwork<opcode_t>::Config clinet_config;
+    repnet_config
+        .burst_size(opt_repburst->get())
+        .nworker(opt_repnworker->get());
+    clinet_config
+        .burst_size(opt_cliburst->get())
+        .nworker(opt_clinworker->get());
     papp = new HotStuffApp(opt_blk_size->get(),
                         opt_stat_period->get(),
                         opt_imp_timeout->get(),
@@ -228,7 +243,8 @@ int main(int argc, char **argv) {
                         std::move(pmaker),
                         ec,
                         opt_nworker->get(),
-                        netconfig);
+                        repnet_config,
+                        clinet_config);
     for (size_t i = 0; i < replicas.size(); i++)
     {
         auto p = split_ip_port_cport(replicas[i].first);
@@ -256,13 +272,14 @@ HotStuffApp::HotStuffApp(uint32_t blk_size,
                         hotstuff::pacemaker_bt pmaker,
                         const EventContext &ec,
                         size_t nworker,
-                        const Net::Config &config):
+                        const Net::Config &repnet_config,
+                        const ClientNetwork<opcode_t>::Config &clinet_config):
     HotStuff(blk_size, idx, raw_privkey,
-            plisten_addr, std::move(pmaker), ec, nworker, config),
+            plisten_addr, std::move(pmaker), ec, nworker, repnet_config),
     stat_period(stat_period),
     impeach_timeout(impeach_timeout),
     ec(ec),
-    cn(ec, ClientNetwork<opcode_t>::Config()),
+    cn(ec, clinet_config),
     clisten_addr(clisten_addr) {
     /* register the handlers for msg from clients */
     cn.reg_handler(salticidae::generic_bind(&HotStuffApp::client_request_cmd_handler, this, _1, _2));
@@ -284,6 +301,7 @@ void HotStuffApp::client_request_cmd_handler(MsgReqCmd &&msg, const conn_t &conn
         });
     else
     {
+        /*
         auto it = unconfirmed.find(cmd_hash);
         if (it == unconfirmed.end())
             it = unconfirmed.insert(
@@ -291,6 +309,7 @@ void HotStuffApp::client_request_cmd_handler(MsgReqCmd &&msg, const conn_t &conn
         it->second.then([this, addr](const Finality &fin) {
             cn.send_msg(MsgRespCmd(std::move(fin)), addr);
         });
+        */
     }
 }
 
