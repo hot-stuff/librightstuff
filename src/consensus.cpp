@@ -124,6 +124,7 @@ bool HotStuffCore::update_hqc(const block_t &_bqc, const quorum_cert_bt &qc) {
 // 2. Vote
 void HotStuffCore::_vote(const block_t &blk) {
     const auto &blk_hash = blk->get_hash();
+    LOG_PROTO("vote for %s", get_hex10(blk_hash).c_str());
     Vote vote(id, blk_hash,
             create_part_cert(
                 *priv_key,
@@ -209,6 +210,7 @@ void HotStuffCore::on_receive_proposal(const Proposal &prop) {
     if (view_trans) return;
     LOG_PROTO("got %s", std::string(prop).c_str());
     block_t bnew = prop.blk;
+    if (finished_propose[bnew]) return;
     sanity_check_delivered(bnew);
     if (bnew->qc_ref)
         update_hqc(bnew->qc_ref, bnew->qc);
@@ -242,6 +244,7 @@ void HotStuffCore::on_receive_proposal(const Proposal &prop) {
     LOG_PROTO("now state: %s", std::string(*this).c_str());
     if (bnew->qc_ref)
         on_qc_finish(bnew->qc_ref);
+    finished_propose[bnew] = true;
     on_receive_proposal_(prop);
     // check if the proposal extends the highest certified block
     if (opinion) _vote(bnew);
@@ -255,14 +258,14 @@ void HotStuffCore::on_receive_vote(const Vote &vote) {
     {
         // FIXME: fill voter as proposer as a quickfix here, may be inaccurate
         // for some PaceMakers
-        finished_propose[blk] = true;
+        //finished_propose[blk] = true;
         on_receive_proposal(Proposal(vote.voter, blk, nullptr));
     }
     size_t qsize = blk->voted.size();
     if (qsize >= config.nmajority) return;
     if (!blk->voted.insert(vote.voter).second)
     {
-        LOG_WARN("duplicate vote from %d", vote.voter);
+        LOG_WARN("duplicate vote for %s from %d", get_hex10(vote.blk_hash).c_str(), vote.voter);
         return;
     }
     auto &qc = blk->self_qc;
