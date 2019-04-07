@@ -285,7 +285,8 @@ class HotStuffBase: public HotStuffCore {
 
     /* Submit the command to be decided. */
     promise_t exec_command(uint256_t cmd);
-    void start(std::vector<std::pair<NetAddr, pubkey_bt>> &&replicas, double delta, bool ec_loop = false);
+    void start(std::vector<std::pair<NetAddr, pubkey_bt>> &&replicas,
+            double delta, bool ec_loop = false);
 
     size_t size() const { return peers.size(); }
     PaceMaker &get_pace_maker() { return *pmaker; }
@@ -351,11 +352,12 @@ class HotStuff: public HotStuffBase {
                     nworker,
                     netconfig) {}
 
-    void start(const std::vector<std::pair<NetAddr, bytearray_t>> &replicas, bool ec_loop = false) {
+    void start(const std::vector<std::pair<NetAddr, bytearray_t>> &replicas,
+                double delta, bool ec_loop = false) {
         std::vector<std::pair<NetAddr, pubkey_bt>> reps;
         for (auto &r: replicas)
             reps.push_back(std::make_pair(r.first, new PubKeyType(r.second)));
-        HotStuffBase::start(std::move(reps), ec_loop);
+        HotStuffBase::start(std::move(reps), delta, ec_loop);
     }
 };
 

@@ -338,6 +338,7 @@ void HotStuffApp::start(
     HOTSTUFF_LOG_INFO("** starting the system with parameters **");
     HOTSTUFF_LOG_INFO("blk_size = %lu", blk_size);
     HOTSTUFF_LOG_INFO("conns = %lu", HotStuff::size());
+    HOTSTUFF_LOG_INFO("delta = %.4f", delta);
     HOTSTUFF_LOG_INFO("** starting the event loop...");
     HotStuff::start(reps, delta);
     cn.reg_conn_handler([this](const salticidae::ConnPool::conn_t &_conn, bool connected) {
