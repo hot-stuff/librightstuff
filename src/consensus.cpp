@@ -33,7 +33,6 @@ namespace hotstuff {
 HotStuffCore::HotStuffCore(ReplicaID id,
                             privkey_bt &&priv_key):
         b0(new Block(true, 1)),
-        hqc(std::make_pair(b0, nullptr)),
         bexec(b0),
         vheight(0),
         view(0),
@@ -45,7 +44,6 @@ HotStuffCore::HotStuffCore(ReplicaID id,
         id(id),
         storage(new EntityStorage()) {
     storage->add_blk(b0);
-    b0->qc_ref = b0;
 }
 
 void HotStuffCore::sanity_check_delivered(const block_t &blk) {
@@ -87,6 +85,15 @@ bool HotStuffCore::on_deliver_blk(const block_t &blk) {
     return true;
 }
 
+void HotStuffCore::update_hqc(const block_t &_hqc, const quorum_cert_bt &qc) {
+    assert(qc->get_obj_hash() == Vote::proof_obj_hash(_hqc->get_hash()));
+    if (_hqc->height > hqc.first->height)
+    {
+        hqc = std::make_pair(_hqc, qc->clone());
+        on_hqc_update();
+    }
+}
+
 void HotStuffCore::check_commit(const block_t &p) {
     std::vector<block_t> commit_queue;
     block_t b;
@@ -109,16 +116,6 @@ void HotStuffCore::check_commit(const block_t &p) {
                                 cmd, blk->get_hash()));
     }
     bexec = p;
-}
-
-bool HotStuffCore::update_hqc(const block_t &_bqc, const quorum_cert_bt &qc) {
-    assert(qc->get_obj_hash() == Vote::proof_obj_hash(_bqc->get_hash()));
-    if (_bqc->height > hqc.first->height)
-    {
-        hqc = std::make_pair(_bqc, qc->clone());
-        on_hqc_update();
-    }
-    return true;
 }
 
 // 2. Vote
@@ -177,7 +174,7 @@ void HotStuffCore::on_propose(const std::vector<uint256_t> &cmds,
     quorum_cert_bt qc = nullptr;
     block_t qc_ref = nullptr;
     /* a block can optionally carray a QC */
-    if (p != b0 && p->voted.size() >= config.nmajority)
+    if (p->voted.size() >= config.nmajority)
     {
         qc = p->self_qc->clone();
         qc_ref = p;
@@ -278,8 +275,8 @@ void HotStuffCore::on_receive_vote(const Vote &vote) {
     if (qsize + 1 == config.nmajority)
     {
         qc->compute();
-        update_hqc(blk, qc);
         on_qc_finish(blk);
+        update_hqc(blk, qc);
     }
 }
 
@@ -336,6 +333,11 @@ void HotStuffCore::on_init(uint32_t nfaulty, double delta) {
     config.nmajority = nfaulty + 1;
     config.delta = delta;
     blame_qc = create_quorum_cert(Blame::proof_obj_hash(view));
+    b0->qc = create_quorum_cert(Vote::proof_obj_hash(b0->get_hash()));
+    b0->qc->compute();
+    b0->self_qc = b0->qc->clone();
+    b0->qc_ref = b0;
+    hqc = std::make_pair(b0, b0->qc->clone());
 }
 
 void HotStuffCore::prune(uint32_t staleness) {
@@ -400,8 +402,8 @@ promise_t HotStuffCore::async_wait_receive_proposal() {
     });
 }
 
-promise_t HotStuffCore::async_bqc_update() {
-    return bqc_update_waiting.then([this]() {
+promise_t HotStuffCore::async_hqc_update() {
+    return hqc_update_waiting.then([this]() {
         return hqc.first;
     });
 }
@@ -427,8 +429,8 @@ void HotStuffCore::on_receive_proposal_(const Proposal &prop) {
 }
 
 void HotStuffCore::on_hqc_update() {
-    auto t = std::move(bqc_update_waiting);
-    bqc_update_waiting = promise_t();
+    auto t = std::move(hqc_update_waiting);
+    hqc_update_waiting = promise_t();
     t.resolve();
 }
 
@@ -447,8 +449,8 @@ void HotStuffCore::on_view_trans() {
 HotStuffCore::operator std::string () const {
     DataStream s;
     s << "<hotstuff "
-      << "hqc.qc_ref=" << get_hex10(hqc.first->get_hash()) << " "
-      << "hqc.qc_ref.height=" << std::to_string(hqc.first->height) << " "
+      << "hqc=" << get_hex10(hqc.first->get_hash()) << " "
+      << "hqc.height=" << std::to_string(hqc.first->height) << " "
       << "bexec=" << get_hex10(bexec->get_hash()) << " "
       << "vheight=" << std::to_string(vheight) << " "
       << "view=" << std::to_string(view) << " "

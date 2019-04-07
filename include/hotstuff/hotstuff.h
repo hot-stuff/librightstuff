@@ -167,7 +167,7 @@ class HotStuffBase: public HotStuffCore {
     /** libevent handle */
     EventContext ec;
     VeriPool vpool;
-    std::unordered_set<NetAddr> peers;
+    std::vector<NetAddr> peers;
     std::unordered_map<uint32_t, TimerEvent> commit_timers;
     TimerEvent blame_timer;
     TimerEvent viewtrans_timer;
@@ -223,8 +223,9 @@ class HotStuffBase: public HotStuffCore {
     template<typename T, typename M>
     void _do_broadcast(const T &t) {
         M m(t);
-        for (const auto &replica: peers)
-            pn.send_msg(m, replica);
+        pn.multicast_msg(m, peers);
+        //for (const auto &replica: peers)
+        //    pn.send_msg(m, replica);
     }
 
     void do_broadcast_proposal(const Proposal &prop) override {
@@ -276,7 +277,7 @@ class HotStuffBase: public HotStuffCore {
             pacemaker_bt pmaker,
             EventContext ec,
             size_t nworker,
-            const Net::Config &config);
+            const Net::Config &netconfig);
 
     ~HotStuffBase();
 
@@ -284,8 +285,7 @@ class HotStuffBase: public HotStuffCore {
 
     /* Submit the command to be decided. */
     promise_t exec_command(uint256_t cmd);
-    void add_replica(ReplicaID idx, const NetAddr &addr, pubkey_bt &&pub_key);
-    void start(double delta, bool ec_loop = false);
+    void start(std::vector<std::pair<NetAddr, pubkey_bt>> &&replicas, double delta, bool ec_loop = false);
 
     size_t size() const { return peers.size(); }
     PaceMaker &get_pace_maker() { return *pmaker; }
@@ -341,7 +341,7 @@ class HotStuff: public HotStuffBase {
             pacemaker_bt pmaker,
             EventContext ec = EventContext(),
             size_t nworker = 4,
-            const Net::Config &config = Net::Config()):
+            const Net::Config &netconfig = Net::Config()):
         HotStuffBase(blk_size,
                     rid,
                     new PrivKeyType(raw_privkey),
@@ -349,11 +349,13 @@ class HotStuff: public HotStuffBase {
                     std::move(pmaker),
                     ec,
                     nworker,
-                    config) {}
+                    netconfig) {}
 
-    void add_replica(ReplicaID idx, const NetAddr &addr, const bytearray_t &pubkey_raw) {
-        DataStream s(pubkey_raw);
-        HotStuffBase::add_replica(idx, addr, new PubKeyType(pubkey_raw));
+    void start(const std::vector<std::pair<NetAddr, bytearray_t>> &replicas, bool ec_loop = false) {
+        std::vector<std::pair<NetAddr, pubkey_bt>> reps;
+        for (auto &r: replicas)
+            reps.push_back(std::make_pair(r.first, new PubKeyType(r.second)));
+        HotStuffBase::start(std::move(reps), ec_loop);
     }
 };
 

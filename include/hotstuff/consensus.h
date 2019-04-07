@@ -63,7 +63,7 @@ class HotStuffCore {
     std::unordered_map<block_t, promise_t> qc_waiting;
     promise_t propose_waiting;
     promise_t receive_proposal_waiting;
-    promise_t bqc_update_waiting;
+    promise_t hqc_update_waiting;
     promise_t view_change_waiting;
     promise_t view_trans_waiting;
     /* == feature switches == */
@@ -72,8 +72,8 @@ class HotStuffCore {
 
     block_t get_delivered_blk(const uint256_t &blk_hash);
     void sanity_check_delivered(const block_t &blk);
-    void check_commit(const block_t &_bqc);
-    bool update_hqc(const block_t &_hqc, const quorum_cert_bt &qc);
+    void check_commit(const block_t &_hqc);
+    void update_hqc(const block_t &_hqc, const quorum_cert_bt &qc);
     void on_hqc_update();
     void on_qc_finish(const block_t &blk);
     void on_propose_(const Proposal &prop);
@@ -186,8 +186,8 @@ class HotStuffCore {
     promise_t async_wait_proposal();
     /** Get a promise resolved when a new proposal is received. */
     promise_t async_wait_receive_proposal();
-    /** Get a promise resolved when bqc is updated. */
-    promise_t async_bqc_update();
+    /** Get a promise resolved when hqc is updated. */
+    promise_t async_hqc_update();
     /** Get a promise resolved after a view change. */
     promise_t async_wait_view_change();
     /** Get a promise resolved before a view change. */
@@ -195,8 +195,7 @@ class HotStuffCore {
 
     /* Other useful functions */
     const block_t &get_genesis() { return b0; }
-    // NOTE: this "bqc" is actual "hqc" in Sync HotStuff
-    const block_t &get_bqc() { return hqc.first; }
+    const block_t &get_hqc() { return hqc.first; }
     const ReplicaConfig &get_config() { return config; }
     ReplicaID get_id() const { return id; }
     const std::set<block_t, BlockHeightCmp> get_tails() const { return tails; }
@@ -225,8 +224,7 @@ struct Proposal: public Serializable {
             const block_t &blk,
             HotStuffCore *hsc):
         proposer(proposer),
-        blk(blk),
-        hsc(hsc) {}
+        blk(blk), hsc(hsc) {}
 
     Proposal(const Proposal &other):
         proposer(other.proposer),

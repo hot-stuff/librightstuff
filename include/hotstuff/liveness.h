@@ -60,44 +60,42 @@ using pacemaker_bt = BoxObj<PaceMaker>;
  * direct parent, while including other tail blocks (up to parent_limit) as
  * uncles/aunts. */
 class PMAllParents: public virtual PaceMaker {
-    block_t bqc_tail;
+    block_t hqc_tail;
     const int32_t parent_limit;         /**< maximum number of parents */
     
-    void reg_bqc_update() {
-        hsc->async_bqc_update().then([this](const block_t &bqc) {
-            //const auto &pref = bqc->get_qc_ref();
-            const auto &pref = bqc;
+    void reg_hqc_update() {
+        hsc->async_hqc_update().then([this](const block_t &hqc) {
+            const auto &pref = hqc;
             for (const auto &blk: hsc->get_tails())
             {
                 block_t b;
                 for (b = blk;
                     b->get_height() > pref->get_height();
                     b = b->get_parents()[0]);
-                if (b == pref && blk->get_height() > bqc_tail->get_height())
-                    bqc_tail = blk;
+                if (b == pref && blk->get_height() > hqc_tail->get_height())
+                    hqc_tail = blk;
             }
-            reg_bqc_update();
+            reg_hqc_update();
         });
     }
 
     void reg_proposal() {
         hsc->async_wait_proposal().then([this](const Proposal &prop) {
-            bqc_tail = prop.blk;
+            hqc_tail = prop.blk;
             reg_proposal();
         });
     }
 
     void reg_receive_proposal() {
         hsc->async_wait_receive_proposal().then([this](const Proposal &prop) {
-            //const auto &pref = hsc->get_bqc()->get_qc_ref();
-            const auto &pref = hsc->get_bqc();
+            const auto &pref = hsc->get_hqc();
             const auto &blk = prop.blk;
             block_t b;
             for (b = blk;
                 b->get_height() > pref->get_height();
                 b = b->get_parents()[0]);
-            if (b == pref && blk->get_height() > bqc_tail->get_height())
-                bqc_tail = blk;
+            if (b == pref && blk->get_height() > hqc_tail->get_height())
+                hqc_tail = blk;
             reg_receive_proposal();
         });
     }
@@ -105,15 +103,15 @@ class PMAllParents: public virtual PaceMaker {
     public:
     PMAllParents(int32_t parent_limit): parent_limit(parent_limit) {}
     void init() {
-        bqc_tail = hsc->get_genesis();
-        reg_bqc_update();
+        hqc_tail = hsc->get_genesis();
+        reg_hqc_update();
         reg_proposal();
         reg_receive_proposal();
     }
 
     std::vector<block_t> get_parents() override {
         const auto &tails = hsc->get_tails();
-        std::vector<block_t> parents{bqc_tail};
+        std::vector<block_t> parents{hqc_tail};
         auto nparents = tails.size();
         if (parent_limit > 0)
             nparents = std::min(nparents, (size_t)parent_limit);
@@ -121,7 +119,7 @@ class PMAllParents: public virtual PaceMaker {
         /* add the rest of tails as "uncles/aunts" */
         for (const auto &blk: tails)
         {
-            if (blk != bqc_tail)
+            if (blk != hqc_tail)
             {
                 parents.push_back(blk);
                 if (!--nparents) break;

@@ -141,16 +141,6 @@ promise_t HotStuffBase::exec_command(uint256_t cmd_hash) {
     return it->second;
 }
 
-void HotStuffBase::add_replica(ReplicaID idx, const NetAddr &addr,
-                                pubkey_bt &&pub_key) {
-    HotStuffCore::add_replica(idx, addr, std::move(pub_key));
-    if (addr != listen_addr)
-    {
-        peers.insert(addr);
-        pn.add_peer(addr);
-    }
-}
-
 void HotStuffBase::on_fetch_blk(const block_t &blk) {
 #ifdef HOTSTUFF_BLK_PROFILE
     blk_profiler.get_tx(blk->get_hash());
@@ -254,7 +244,8 @@ promise_t HotStuffBase::async_deliver_blk(const uint256_t &blk_hash,
         /* the parents should be delivered */
         for (const auto &phash: blk->get_parent_hashes())
             pms.push_back(async_deliver_blk(phash, replica_id));
-        pms.push_back(blk->verify(get_config(), vpool));
+        if (blk != get_genesis())
+            pms.push_back(blk->verify(get_config(), vpool));
         promise::all(pms).then([this, blk]() {
             on_deliver_blk(blk);
         });
@@ -268,7 +259,9 @@ void HotStuffBase::propose_handler(MsgPropose &&msg, const Net::conn_t &conn) {
     auto &prop = msg.proposal;
     block_t blk = prop.blk;
     if (!blk) return;
-    async_deliver_blk(blk->get_hash(), peer).then([this, prop = std::move(prop)]() {
+    promise::all(std::vector<promise_t>{
+        async_deliver_blk(blk->get_hash(), peer)
+    }).then([this, prop = std::move(prop)]() {
         on_receive_proposal(prop);
     });
 }
@@ -276,13 +269,14 @@ void HotStuffBase::propose_handler(MsgPropose &&msg, const Net::conn_t &conn) {
 void HotStuffBase::vote_handler(MsgVote &&msg, const Net::conn_t &conn) {
     const NetAddr &peer = conn->get_peer();
     msg.postponed_parse(this);
+    //auto &vote = msg.vote;
     RcObj<Vote> v(new Vote(std::move(msg.vote)));
     promise::all(std::vector<promise_t>{
         async_deliver_blk(v->blk_hash, peer),
-        v->verify(vpool)
-    }).then([this, v, peer](const promise::values_t values) {
+        v->verify(vpool),
+    }).then([this, v=std::move(v)](const promise::values_t values) {
         if (!promise::any_cast<bool>(values[1]))
-            LOG_WARN("invalid vote message from %s", std::string(peer).c_str());
+            LOG_WARN("invalid vote from %d", v->voter);
         else
             on_receive_vote(*v);
     });
@@ -437,10 +431,11 @@ void HotStuffBase::print_stat() const {
         if (conn == nullptr) continue;
         size_t ns = conn->get_nsent();
         size_t nr = conn->get_nrecv();
-        conn->clear_nsent();
-        conn->clear_nrecv();
-        LOG_INFO("%s: %u, %u, %u",
-            std::string(replica).c_str(), ns, nr, part_fetched_replica[replica]);
+        size_t nsb = conn->get_nsentb();
+        size_t nrb = conn->get_nrecvb();
+        conn->clear_msgstat();
+        LOG_INFO("%s: %u(%u), %u(%u), %u",
+            std::string(replica).c_str(), ns, nsb, nr, nrb, part_fetched_replica[replica]);
         _nsent += ns;
         _nrecv += nr;
         part_fetched_replica[replica] = 0;
@@ -508,7 +503,20 @@ void HotStuffBase::do_decide(Finality &&fin) {
 
 HotStuffBase::~HotStuffBase() {}
 
-void HotStuffBase::start(double delta, bool ec_loop) {
+void HotStuffBase::start(
+        std::vector<std::pair<NetAddr, pubkey_bt>> &&replicas,
+        double delta, bool ec_loop) {
+    for (size_t i = 0; i < replicas.size(); i++)
+    {
+        auto &addr = replicas[i].first;
+        HotStuffCore::add_replica(i, addr, std::move(replicas[i].second));
+        if (addr != listen_addr)
+        {
+            peers.push_back(addr);
+            pn.add_peer(addr);
+        }
+    }
+
     /* ((n - 1) + 1 - 1) / 2 */
     uint32_t nfaulty = peers.size() / 2;
     if (nfaulty == 0)

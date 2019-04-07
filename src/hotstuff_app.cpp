@@ -124,7 +124,8 @@ class HotStuffApp: public HotStuff {
                 const Net::Config &repnet_config,
                 const ClientNetwork<opcode_t>::Config &clinet_config);
 
-    void start(double delta);
+    void start(const std::vector<std::pair<NetAddr, bytearray_t>> &reps,
+                double delta);
 };
 
 std::pair<std::string, std::string> split_ip_port_cport(const std::string &s) {
@@ -245,11 +246,12 @@ int main(int argc, char **argv) {
                         opt_nworker->get(),
                         repnet_config,
                         clinet_config);
-    for (size_t i = 0; i < replicas.size(); i++)
+    std::vector<std::pair<NetAddr, bytearray_t>> reps;
+    for (auto &r: replicas)
     {
-        auto p = split_ip_port_cport(replicas[i].first);
-        papp->add_replica(i, NetAddr(p.first),
-                            hotstuff::from_hex(replicas[i].second));
+        auto p = split_ip_port_cport(r.first);
+        reps.push_back(std::make_pair(
+            NetAddr(p.first), hotstuff::from_hex(r.second)));
     }
     auto shutdown = [&](int) { ec.stop(); };
     salticidae::SigEvent ev_sigint(ec, shutdown);
@@ -257,7 +259,7 @@ int main(int argc, char **argv) {
     ev_sigint.add(SIGINT);
     ev_sigterm.add(SIGTERM);
 
-    papp->start(opt_delta->get());
+    papp->start(reps, opt_delta->get());
     elapsed.stop(true);
     return 0;
 }
@@ -313,7 +315,9 @@ void HotStuffApp::client_request_cmd_handler(MsgReqCmd &&msg, const conn_t &conn
     }
 }
 
-void HotStuffApp::start(double delta) {
+void HotStuffApp::start(
+        const std::vector<std::pair<NetAddr, bytearray_t>> &reps,
+        double delta) {
     ev_stat_timer = TimerEvent(ec, [this](TimerEvent &) {
         HotStuff::print_stat();
         //HotStuffCore::prune(100);
@@ -329,7 +333,7 @@ void HotStuffApp::start(double delta) {
     HOTSTUFF_LOG_INFO("blk_size = %lu", blk_size);
     HOTSTUFF_LOG_INFO("conns = %lu", HotStuff::size());
     HOTSTUFF_LOG_INFO("** starting the event loop...");
-    HotStuff::start(delta);
+    HotStuff::start(reps, delta);
     /* enter the event main loop */
     ec.dispatch();
 }
