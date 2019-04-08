@@ -106,10 +106,11 @@ promise_t HotStuffBase::exec_command(uint256_t cmd_hash) {
         });
 
     auto it = decision_waiting.find(cmd_hash);
+    promise_t pm{};
     if (it == decision_waiting.end())
     {
         cmd_pending.push(cmd_hash);
-        it = decision_waiting.insert(std::make_pair(cmd_hash, promise_t())).first;
+        it = decision_waiting.insert(std::make_pair(cmd_hash, pm)).first;
     }
 
     if (cmd_pending.size() >= blk_size)
@@ -138,7 +139,7 @@ promise_t HotStuffBase::exec_command(uint256_t cmd_hash) {
                 on_propose(cmds, pmaker->get_parents());
         });
     }
-    return it->second;
+    return pm;
 }
 
 void HotStuffBase::on_fetch_blk(const block_t &blk) {
@@ -326,6 +327,9 @@ void HotStuffBase::blamenotify_handler(MsgBlameNotify &&msg, const Net::conn_t &
 }
 
 void HotStuffBase::set_commit_timer(const block_t &blk, double t_sec) {
+#ifdef SYNCHS_NOTIMER
+    on_commit_timeout(blk);
+#else
     auto height = blk->get_height();
     auto &timer = commit_timers[height] =
         TimerEvent(ec, [this, blk=std::move(blk), height](TimerEvent &) {
@@ -333,6 +337,7 @@ void HotStuffBase::set_commit_timer(const block_t &blk, double t_sec) {
             stop_commit_timer(height);
         });
     timer.add(t_sec);
+#endif
 }
 
 void HotStuffBase::stop_commit_timer(uint32_t height) {
@@ -396,6 +401,7 @@ void HotStuffBase::print_stat() const {
     LOG_INFO("blk_fetch_waiting: %lu", blk_fetch_waiting.size());
     LOG_INFO("blk_delivery_waiting: %lu", blk_delivery_waiting.size());
     LOG_INFO("decision_waiting: %lu", decision_waiting.size());
+    LOG_INFO("commit_timers: %lu", commit_timers.size());
     LOG_INFO("-------- misc ---------");
     LOG_INFO("fetched: %lu", fetched);
     LOG_INFO("delivered: %lu", delivered);

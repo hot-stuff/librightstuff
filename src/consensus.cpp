@@ -125,10 +125,12 @@ void HotStuffCore::_vote(const block_t &blk) {
             create_part_cert(
                 *priv_key,
                 Vote::proof_obj_hash(blk_hash)), this);
+#ifndef SYNCHS_NOVOTEBROADCAST
     on_receive_vote(vote);
+#endif
     do_broadcast_vote(vote);
     set_commit_timer(blk, 2 * config.delta);
-    set_blame_timer(3 * config.delta);
+    //set_blame_timer(3 * config.delta);
 }
 
 // 3. Blame
@@ -329,7 +331,7 @@ void HotStuffCore::on_viewtrans_timeout() {
 
 /*** end HotStuff protocol logic ***/
 void HotStuffCore::on_init(uint32_t nfaulty, double delta) {
-    config.nmajority = nfaulty + 1;
+    config.nmajority = config.nreplicas - nfaulty;
     config.delta = delta;
     blame_qc = create_quorum_cert(Blame::proof_obj_hash(view));
     b0->qc = create_quorum_cert(Vote::proof_obj_hash(b0->get_hash()));

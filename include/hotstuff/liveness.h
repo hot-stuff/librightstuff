@@ -266,6 +266,7 @@ struct PaceMakerRR: public PaceMakerDummy {
     }
 
     promise_t beat_resp(ReplicaID) override {
+        fprintf(stderr, "here");
         return promise_t([this](promise_t &pm) {
             pm.resolve(get_proposer());
         });

@@ -49,7 +49,7 @@ size_t max_async_num;
 int max_iter_num;
 uint32_t cid;
 uint32_t cnt = 0;
-uint32_t nfaulty;
+//uint32_t nfaulty;
 
 struct Request {
     ReplicaID rid;
@@ -188,8 +188,8 @@ int main(int argc, char **argv) {
         replicas.push_back(NetAddr(NetAddr(_p.first).ip, htons(stoi(_p.second, &_))));
     }
 
-    nfaulty = (replicas.size() - 1) / 3;
-    HOTSTUFF_LOG_INFO("nfaulty = %zu", nfaulty);
+    //nfaulty = (replicas.size() - 1) / 3;
+    //HOTSTUFF_LOG_INFO("nfaulty = %zu", nfaulty);
     connect_all();
     set_proposer(idx);
     try_send();

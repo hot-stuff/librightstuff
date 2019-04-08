@@ -233,7 +233,20 @@ class HotStuffBase: public HotStuffCore {
     }
 
     void do_broadcast_vote(const Vote &vote) override {
+#ifdef SYNCHS_NOVOTEBROADCAST
+        pmaker->beat_resp(0)
+                .then([this, vote](ReplicaID proposer) {
+            if (proposer == get_id())
+            {
+                on_receive_vote(vote);
+            }
+            else
+                pn.send_msg(MsgVote(vote), get_config().get_addr(proposer));
+        });
+#else
         _do_broadcast<Vote, MsgVote>(vote);
+#endif
+
     }
 
     void do_broadcast_blame(const Blame &blame) override {
