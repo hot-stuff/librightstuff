@@ -1,0 +1,81 @@
+\documentclass{article}
+\usepackage{multirow}
+\usepackage[margin=1in]{geometry}
+%\newgeometry{margin=1cm}
+\usepackage{pdflscape}
+\begin{document}
+\newcommand{\bsize}{\mathit{batchSize}}
+\begin{landscape}
+\section{Apr 09 2019}
+\begin{center}
+\footnotesize
+\begin{itemize}
+    \item HS
+\begin{itemize}
+    \item Proposal: $\textrm{id}(2) + \textrm{block}(\textrm{parent}(32) + \bsize \cdot \textrm{cmd}(32) + \textrm{qc}(\textrm{hash}(32) + \textrm{bits}(8) + (n - f) \cdot \textrm{sig}(64)))$
+    \item Vote: $\textrm{id}(2) + \textrm{blockHash}(32) + \textrm{cert}(\textrm{hash}(32) + \textrm{sig}(64))$
+\end{itemize}
+    \item Sync HS
+\begin{itemize}
+    \item Proposal: $\textrm{id}(2) + \textrm{block}(\textrm{parent}(32) + \bsize \cdot \textrm{cmd}(32) + \textrm{qc}(\textrm{hash}(32) + \textrm{bits}(8) + (n - f) \cdot \textrm{sig}(64)) + \textrm{qcRefHash}(32))$
+    \item Vote: $\textrm{id}(2) + \textrm{blockHash}(32) + \textrm{cert}(\textrm{hash}(32) + \textrm{sig}(64))$
+\end{itemize}
+\end{itemize}
+\[n = 4, \bsize = 400\]
+\begin{itemize}
+    \item Max bandwidth 9.6Gbits/sec = 1.2GByte/sec
+    \item Actual bandwidth utilization matches the counted bytes below (with some low-level message-container overhead, for sure)
+\end{itemize}
+\begin{itemize}
+    \item HS
+\begin{itemize}
+    \item Proposal: \textasciitilde12.76 KiB
+    \item Vote: 130 B
+\end{itemize}
+    \item Sync HS
+\begin{itemize}
+    \item Proposal: \textasciitilde12.79 KiB
+    \item Vote: 130 B
+\end{itemize}
+\end{itemize}
+
+\begin{tabular}{rl}
+        \texttt{Leader Bytes} & the bytes sent/received by the leader per second \\
+        \texttt{Leader Msg.} & the bytes per message sent/received by the leader per second \\
+        \texttt{Follower Bytes} & similar \\
+        \texttt{Follower Msg.} & similar
+\end{tabular}
+\end{center}
+\begin{center}
+\texttt{%
+    \footnotesize
+\begin{tabular}{cccccccc}
+    Sys. & Load & Xput. (Kops/sec.) & Lat. (msec.) & Leader Bytes & Leader Msg. & Follower Bytes & Follower Msg.\\
+    HS & 75 & 224.7 & 5.174 & 16.6 MiB / 168.6 KiB & 12.78 KiB / 130 B & \multirow{2}{1.5in}{(56.20 + 0 * 2) KiB /\\ (5.54 + 0 * 2) MiB} & 130 B / 12.78 KiB \\
+    \\
+    HS & 1200 & 160.55 & 120.171 & 14.18 MiB / 144.31 KiB & 12.77 KiB / 129.97B & \multirow{2}{1.5in}{(48.10 + 0 * 2) KiB /\\ (4.72 + 0 * 2) MiB} & 130 B / 12.77 KiB \\
+    \\
+    Sync HS & 75 & 6.000 & 201.370 & 1.12 Mib / 7.25 KiB & 8.56 KiB / 82.7B & \multirow{2}{1.5in}{(24.16 + 18.91 * 2) KiB / (3835.88 + 18.91 * 2) KiB} & \multirow{2}{1.5in}{(82.7 | 130 | 130)B /\\ (8.56 KiB | 130 B | 130 B)} \\
+    \\
+    Sync HS & 1200 & 68.38 & 296.941 & 12.64 Mib / 81.56 KiB & 8.58 KiB / 83B & \multirow{2}{1.5in}{(27.19 + 21.29 * 2) KiB / (4317.29 + 21.29 * 2) KiB} & \multirow{2}{1.5in}{(83 | 130 | 130)B /\\ (8.58 KiB | 130 B | 130 B)} \\
+    \\
+    Sync HS1 & 75 & 6.000 & 201.470 & 0.56 Mib / 5.71 KiB & 12.81 KiB / 130 B & \multirow{2}{1.5in}{(18.92 + 0 * 2) KiB / (1908.34 + 0 * 2) KiB} & 130 B / 12.81 KiB \\
+    \\
+    Sync HS1 & 1200 & 75.51 & 268.59 & 6.65 Mib / 67.57 KiB & 12.80 KiB / 130 B & \multirow{2}{1.5in}{(22.52 + 0 * 2) KiB / (2272.07 + 0 * 2) KiB} & 130 B / 12.80 KiB \\
+    \\
+    Sync HS2 & 75 & 221.9 & 5.490 & 19.59 Mib / 198.81 KiB & 12.81 KiB / 130 B & \multirow{2}{1.5in}{(66.27 + 0 * 2) KiB / (6.53 + 0 * 2) MiB} & 130 B / 12.81 KiB \\
+    \\
+    Sync HS2 & 1200 & 146.714 & 128.360 & 13.31 Mib / 135.09 KiB & 12.81 KiB / 130 B & \multirow{2}{1.5in}{(45.02 + 0 * 2) KiB / (4.44 + 0 * 2) MiB} & 130 B / 12.80 KiB
+\end{tabular}
+}
+\end{center}
+
+The replica-client transmission for HS-75:
+\texttt{%
+\begin{itemize}
+    \item Leader: 14.52 MiB / 1.55 MiB
+    \item Follower: N/A / 1.55 MiB
+\end{itemize}
+}
+\end{landscape}
+\end{document}
