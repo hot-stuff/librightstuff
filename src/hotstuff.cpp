@@ -137,7 +137,7 @@ promise_t HotStuffBase::exec_command(uint256_t cmd_hash) {
             }
             else
                 on_propose(cmds, pmaker->get_parents());
-            if (pmaker->get_pending_size() < 3)
+            for (size_t i = pmaker->get_pending_size(); i < 3; i++)
                 do_demand_commands(blk_size);
         });
     }
