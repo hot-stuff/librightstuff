@@ -110,6 +110,14 @@ class HotStuffApp: public HotStuff {
         */
     }
 
+    void do_demand_commands(size_t blk_size) override {
+        size_t ncli = client_conns.size();
+        size_t bsize = (blk_size + ncli - 1) / ncli;
+        hotstuff::MsgDemandCmd mdc{bsize};
+        for(const auto &conn: client_conns)
+            cn.send_msg(mdc, conn);
+    }
+
 #ifdef HOTSTUFF_MSG_STAT
     std::unordered_set<conn_t> client_conns;
     void print_stat() const;

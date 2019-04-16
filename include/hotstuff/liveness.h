@@ -51,6 +51,7 @@ class PaceMaker {
     virtual promise_t beat_resp(ReplicaID last_proposer) = 0;
     /** Impeach the current proposer. */
     virtual void impeach() {}
+    virtual size_t get_pending_size() = 0;
 };
 
 using pacemaker_bt = BoxObj<PaceMaker>;
@@ -167,6 +168,7 @@ class PMWaitQC: public virtual PaceMaker {
 
     public:
 
+    size_t get_pending_size() override { return pending_beats.size(); }
     void on_view_trans() { locked = true; }
     void on_view_change() {
         ReplicaID proposer = get_proposer();
