@@ -50,6 +50,7 @@ struct MsgRespCmd {
     }
 };
 
+#ifdef SYNCHS_AUTOCLI
 struct MsgDemandCmd {
     static const opcode_t opcode = 0x6;
     DataStream serialized;
@@ -57,6 +58,7 @@ struct MsgDemandCmd {
     MsgDemandCmd(size_t ncmd) { serialized << ncmd; }
     MsgDemandCmd(DataStream &&s) { s >> ncmd; }
 };
+#endif
 
 class CommandDummy: public Command {
     uint32_t cid;

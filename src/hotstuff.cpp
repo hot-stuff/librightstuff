@@ -111,6 +111,9 @@ promise_t HotStuffBase::exec_command(uint256_t cmd_hash) {
     {
         cmd_pending.push(cmd_hash);
         it = decision_waiting.insert(std::make_pair(cmd_hash, pm)).first;
+#ifdef SYNCHS_LATBREAKDOWN
+        cmd_lats[cmd_hash].on_init();
+#endif
     }
 
     if (cmd_pending.size() >= blk_size)
@@ -136,11 +139,29 @@ promise_t HotStuffBase::exec_command(uint256_t cmd_hash) {
                 }
             }
             else
+            {
                 on_propose(cmds, pmaker->get_parents());
-            for (size_t i = pmaker->get_pending_size(); i < 3; i++)
+#ifdef SYNCHS_LATBREAKDOWN
+                for (auto &ch: cmds)
+                    cmd_lats[ch].on_propose();
+#endif
+            }
+#ifdef SYNCHS_AUTOCLI
+            for (size_t i = pmaker->get_pending_size(); i < 1; i++)
                 do_demand_commands(blk_size);
+#endif
         });
     }
+#ifdef SYNCHS_LATBREAKDOWN
+    pm = pm.then([this](Finality fin) {
+        auto cl = cmd_lats.find(fin.cmd_hash);
+        cl->second.on_commit();
+        part_lat_proposed += cl->second.proposed;
+        part_lat_committed += cl->second.committed;
+        cmd_lats.erase(cl);
+        return fin;
+    });
+#endif
     return pm;
 }
 
@@ -407,6 +428,10 @@ void HotStuffBase::print_stat() const {
     LOG_INFO("-------- misc ---------");
     LOG_INFO("fetched: %lu", fetched);
     LOG_INFO("delivered: %lu", delivered);
+#ifdef SYNCHS_LATBREAKDOWN
+    LOG_INFO("lat_propose: %.3f", part_lat_proposed / part_decided * 1e3);
+    LOG_INFO("lat_commit: %.3f", part_lat_committed / part_decided * 1e3);
+#endif
     LOG_INFO("cmd_cache: %lu", storage->get_cmd_cache_size());
     LOG_INFO("blk_cache: %lu", storage->get_blk_cache_size());
     LOG_INFO("------ misc (10s) -----");
@@ -425,6 +450,8 @@ void HotStuffBase::print_stat() const {
     part_fetched = 0;
     part_delivered = 0;
     part_decided = 0;
+    part_lat_proposed = 0;
+    part_lat_committed = 0;
     part_gened = 0;
     part_delivery_time = 0;
     part_delivery_time_min = double_inf;
@@ -485,6 +512,11 @@ HotStuffBase::HotStuffBase(uint32_t blk_size,
         part_delivery_time(0),
         part_delivery_time_min(double_inf),
         part_delivery_time_max(0)
+#ifdef SYNCHS_LATBREAKDOWN
+    ,   part_lat_proposed(0),
+        part_lat_committed(0)
+#endif
+
 {
     /* register the handlers for msg from replicas */
     pn.reg_handler(salticidae::generic_bind(&HotStuffBase::propose_handler, this, _1, _2));

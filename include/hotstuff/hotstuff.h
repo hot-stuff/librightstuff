@@ -203,6 +203,27 @@ class HotStuffBase: public HotStuffCore {
     mutable double part_delivery_time_max;
     mutable std::unordered_map<const NetAddr, uint32_t> part_fetched_replica;
 
+#ifdef SYNCHS_LATBREAKDOWN
+    struct CmdLatStat {
+        double proposed;
+        double committed;
+        ElapsedTime et;
+        void on_init() { et.start(); }
+        void on_propose() {
+            et.stop();
+            proposed = et.elapsed_sec;
+            et.start();
+        }
+        void on_commit() {
+            et.stop();
+            committed = et.elapsed_sec;
+        }
+    };
+    std::unordered_map<const uint256_t, CmdLatStat> cmd_lats;
+    mutable double part_lat_proposed;
+    mutable double part_lat_committed;
+#endif
+
     void on_fetch_cmd(const command_t &cmd);
     void on_fetch_blk(const block_t &blk);
     void on_deliver_blk(const block_t &blk);
@@ -283,6 +304,7 @@ class HotStuffBase: public HotStuffCore {
     virtual void state_machine_execute(const Finality &) = 0;
 
     public:
+
     HotStuffBase(uint32_t blk_size,
             ReplicaID rid,
             privkey_bt &&priv_key,
@@ -304,7 +326,9 @@ class HotStuffBase: public HotStuffCore {
     size_t size() const { return peers.size(); }
     PaceMaker &get_pace_maker() { return *pmaker; }
     void print_stat() const;
+#ifdef SYNCHS_AUTOCLI
     virtual void do_demand_commands(size_t) {}
+#endif
 
     /* Helper functions */
     /** Returns a promise resolved (with command_t cmd) when Command is fetched. */
