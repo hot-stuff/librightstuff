@@ -145,11 +145,11 @@ promise_t HotStuffBase::exec_command(uint256_t cmd_hash) {
                 for (auto &ch: cmds)
                     cmd_lats[ch].on_propose();
 #endif
-            }
 #ifdef SYNCHS_AUTOCLI
-            for (size_t i = pmaker->get_pending_size(); i < 1; i++)
-                do_demand_commands(blk_size);
+                for (size_t i = pmaker->get_pending_size(); i < 1; i++)
+                    do_demand_commands(blk_size);
 #endif
+            }
         });
     }
 #ifdef SYNCHS_LATBREAKDOWN
@@ -429,8 +429,10 @@ void HotStuffBase::print_stat() const {
     LOG_INFO("fetched: %lu", fetched);
     LOG_INFO("delivered: %lu", delivered);
 #ifdef SYNCHS_LATBREAKDOWN
-    LOG_INFO("lat_propose: %.3f", part_lat_proposed / part_decided * 1e3);
-    LOG_INFO("lat_commit: %.3f", part_lat_committed / part_decided * 1e3);
+    LOG_INFO("lat_propose: %.3f ms",
+            part_decided ? part_lat_proposed / part_decided * 1e3 : 0);
+    LOG_INFO("lat_commit: +%.3f ms",
+            part_decided ? part_lat_committed / part_decided * 1e3 : 0);
 #endif
     LOG_INFO("cmd_cache: %lu", storage->get_cmd_cache_size());
     LOG_INFO("blk_cache: %lu", storage->get_blk_cache_size());
@@ -450,8 +452,10 @@ void HotStuffBase::print_stat() const {
     part_fetched = 0;
     part_delivered = 0;
     part_decided = 0;
+#ifdef SYNCHS_LATBREAKDOWN
     part_lat_proposed = 0;
     part_lat_committed = 0;
+#endif
     part_gened = 0;
     part_delivery_time = 0;
     part_delivery_time_min = double_inf;
