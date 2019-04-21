@@ -136,7 +136,7 @@ void client_resp_cmd_handler(MsgRespCmd &&msg, const Net::conn_t &) {
     elapsed.push_back(std::make_pair(tv, et.elapsed_sec));
 #endif
     waiting.erase(it);
-#ifndef SYNCHS_AUTOCLI
+#if !defined(SYNCHS_AUTOCLI) || defined(SYNCHS_RESENDALL)
     while (try_send());
 #endif
 }
