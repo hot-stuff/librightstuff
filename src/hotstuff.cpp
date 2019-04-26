@@ -116,15 +116,31 @@ promise_t HotStuffBase::exec_command(uint256_t cmd_hash) {
 #endif
     }
 
-    if (cmd_pending.size() >= blk_size)
+
+#ifdef SYNCHS_LATBREAKDOWN
+    pm = pm.then([this](Finality fin) {
+        auto cl = cmd_lats.find(fin.cmd_hash);
+        cl->second.on_commit();
+        part_lat_proposed += cl->second.proposed;
+        part_lat_committed += cl->second.committed;
+        cmd_lats.erase(cl);
+        return fin;
+    });
+#endif
+    return pm;
+}
+
+void HotStuffBase::init_generate() {
+    pmaker->beat().then([this](ReplicaID proposer) {
+    //if (cmd_pending.size() >= blk_size)
     {
         std::vector<uint256_t> cmds;
         for (uint32_t i = 0; i < blk_size; i++)
         {
+            if (!cmd_pending.size()) break;
             cmds.push_back(cmd_pending.front());
             cmd_pending.pop();
         }
-        pmaker->beat().then([this, cmds = std::move(cmds)](ReplicaID proposer) {
             if (proposer != get_id())
             {
                 for (auto &cmd_hash: cmds)
@@ -147,22 +163,12 @@ promise_t HotStuffBase::exec_command(uint256_t cmd_hash) {
 #endif
 #ifdef SYNCHS_AUTOCLI
                 for (size_t i = pmaker->get_pending_size(); i < 1; i++)
-                    do_demand_commands(blk_size);
+                    do_demand_commands(cmds.size());
 #endif
             }
-        });
     }
-#ifdef SYNCHS_LATBREAKDOWN
-    pm = pm.then([this](Finality fin) {
-        auto cl = cmd_lats.find(fin.cmd_hash);
-        cl->second.on_commit();
-        part_lat_proposed += cl->second.proposed;
-        part_lat_committed += cl->second.committed;
-        cmd_lats.erase(cl);
-        return fin;
+        init_generate();
     });
-#endif
-    return pm;
 }
 
 void HotStuffBase::on_fetch_blk(const block_t &blk) {
@@ -567,6 +573,12 @@ void HotStuffBase::start(
         LOG_WARN("too few replicas in the system to tolerate any failure");
     on_init(nfaulty, delta);
     pmaker->init(this);
+    init_generate_timer = TimerEvent(ec, [this](TimerEvent &) {
+        fprintf(stderr, "init\n");
+        if (pmaker->get_proposer() == id)
+            init_generate();
+    });
+    init_generate_timer.add(10);
     if (ec_loop)
         ec.dispatch();
 }

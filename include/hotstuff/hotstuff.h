@@ -240,6 +240,8 @@ class HotStuffBase: public HotStuffCore {
     inline void req_blk_handler(MsgReqBlock &&, const Net::conn_t &);
     /** receives a block */
     inline void resp_blk_handler(MsgRespBlock &&, const Net::conn_t &);
+    TimerEvent init_generate_timer;
+    void init_generate();
 
     template<typename T, typename M>
     void _do_broadcast(const T &t) {

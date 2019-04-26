@@ -115,6 +115,7 @@ class HotStuffApp: public HotStuff {
 #ifdef SYNCHS_AUTOCLI
     void do_demand_commands(size_t blk_size) override {
         size_t ncli = client_conns.size();
+        if (!blk_size || !ncli) return;
         size_t bsize = (blk_size + ncli - 1) / ncli;
         hotstuff::MsgDemandCmd mdc{bsize};
         for(const auto &conn: client_conns)
