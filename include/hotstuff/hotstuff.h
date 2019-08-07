@@ -27,7 +27,6 @@
 #include "salticidae/msg.h"
 #include "hotstuff/util.h"
 #include "hotstuff/consensus.h"
-#include "hotstuff/liveness.h"
 
 namespace hotstuff {
 
@@ -109,6 +108,7 @@ struct MsgRespBlock {
 using promise::promise_t;
 
 class HotStuffBase;
+using pacemaker_bt = BoxObj<class PaceMaker>;
 
 template<EntityType ent_type>
 class FetchContext: public promise_t {
@@ -158,6 +158,7 @@ class HotStuffBase: public HotStuffCore {
 
     public:
     using Net = PeerNetwork<opcode_t>;
+    using commit_cb_t = std::function<void(const Finality &)>;
 
     protected:
     /** the binding address in replica network */
@@ -166,6 +167,7 @@ class HotStuffBase: public HotStuffCore {
     size_t blk_size;
     /** libevent handle */
     EventContext ec;
+    salticidae::ThreadCall tcall;
     VeriPool vpool;
     std::vector<NetAddr> peers;
     std::unordered_map<uint32_t, TimerEvent> commit_timers;
@@ -177,6 +179,7 @@ class HotStuffBase: public HotStuffCore {
     bool ec_loop;
     /** network stack */
     Net pn;
+    std::unordered_set<uint256_t> valid_tls_certs;
 #ifdef HOTSTUFF_BLK_PROFILE
     BlockProfiler blk_profiler;
 #endif
@@ -184,8 +187,10 @@ class HotStuffBase: public HotStuffCore {
     /* queues for async tasks */
     std::unordered_map<const uint256_t, BlockFetchContext> blk_fetch_waiting;
     std::unordered_map<const uint256_t, BlockDeliveryContext> blk_delivery_waiting;
-    std::unordered_map<const uint256_t, promise_t> decision_waiting;
-    std::queue<uint256_t> cmd_pending;
+    std::unordered_map<const uint256_t, commit_cb_t> decision_waiting;
+    using cmd_queue_t = salticidae::MPSCQueueEventDriven<std::pair<uint256_t, commit_cb_t>>;
+    cmd_queue_t cmd_pending;
+    std::queue<uint256_t> cmd_pending_buffer;
 
     /* statistics */
     uint64_t fetched;
@@ -241,10 +246,11 @@ class HotStuffBase: public HotStuffCore {
     /** receives a block */
     inline void resp_blk_handler(MsgRespBlock &&, const Net::conn_t &);
 
+    inline bool conn_handler(const salticidae::ConnPool::conn_t &, bool);
     template<typename T, typename M>
     void _do_broadcast(const T &t) {
-        M m(t);
-        pn.multicast_msg(m, peers);
+        //M m(t);
+        pn.multicast_msg(M(t), peers);
         //for (const auto &replica: peers)
         //    pn.send_msg(m, replica);
     }
@@ -259,7 +265,8 @@ class HotStuffBase: public HotStuffCore {
                 .then([this, vote](ReplicaID proposer) {
             if (proposer == get_id())
             {
-                on_receive_vote(vote);
+                throw HotStuffError("unreachable line");
+                //on_receive_vote(vote);
             }
             else
                 pn.send_msg(MsgVote(vote), get_config().get_addr(proposer));
@@ -278,14 +285,7 @@ class HotStuffBase: public HotStuffCore {
         _do_broadcast<BlameNotify, MsgBlameNotify>(bn);
     }
 
-    void do_notify(const Notify &notify) override {
-        MsgNotify m(notify);
-        ReplicaID next_proposer = pmaker->get_proposer();
-        if (next_proposer != get_id())
-            pn.send_msg(m, get_config().get_addr(next_proposer));
-        else
-            on_receive_notify(notify);
-    }
+    void do_notify(const Notify &notify) override;
 
     void set_commit_timer(const block_t &blk, double t_sec) override;
     void stop_commit_timer(uint32_t height) override;
@@ -296,6 +296,7 @@ class HotStuffBase: public HotStuffCore {
     void stop_viewtrans_timer() override;
 
     void do_decide(Finality &&) override;
+    void do_consensus(const block_t &blk) override;
 
     protected:
 
@@ -304,7 +305,6 @@ class HotStuffBase: public HotStuffCore {
     virtual void state_machine_execute(const Finality &) = 0;
 
     public:
-
     HotStuffBase(uint32_t blk_size,
             ReplicaID rid,
             privkey_bt &&priv_key,
@@ -319,13 +319,16 @@ class HotStuffBase: public HotStuffCore {
     /* the API for HotStuffBase */
 
     /* Submit the command to be decided. */
-    promise_t exec_command(uint256_t cmd);
-    void start(std::vector<std::pair<NetAddr, pubkey_bt>> &&replicas,
-            double delta, bool ec_loop = false);
+    void exec_command(uint256_t cmd_hash, commit_cb_t callback);
+    void start(std::vector<std::tuple<NetAddr, pubkey_bt, uint256_t>> &&replicas,
+                double delta, bool ec_loop = false);
 
     size_t size() const { return peers.size(); }
-    PaceMaker &get_pace_maker() { return *pmaker; }
+    const auto &get_decision_waiting() const { return decision_waiting; }
+    ThreadCall &get_tcall() { return tcall; }
+    PaceMaker *get_pace_maker() { return pmaker.get(); }
     void print_stat() const;
+    virtual void do_elected() {}
 #ifdef SYNCHS_AUTOCLI
     virtual void do_demand_commands(size_t) {}
 #endif
@@ -390,11 +393,16 @@ class HotStuff: public HotStuffBase {
                     nworker,
                     netconfig) {}
 
-    void start(const std::vector<std::pair<NetAddr, bytearray_t>> &replicas,
+    void start(const std::vector<std::tuple<NetAddr, bytearray_t, bytearray_t>> &replicas,
                 double delta, bool ec_loop = false) {
-        std::vector<std::pair<NetAddr, pubkey_bt>> reps;
+        std::vector<std::tuple<NetAddr, pubkey_bt, uint256_t>> reps;
         for (auto &r: replicas)
-            reps.push_back(std::make_pair(r.first, new PubKeyType(r.second)));
+            reps.push_back(
+                std::make_tuple(
+                    std::get<0>(r),
+                    new PubKeyType(std::get<1>(r)),
+                    uint256_t(std::get<2>(r))
+                ));
         HotStuffBase::start(std::move(reps), delta, ec_loop);
     }
 };

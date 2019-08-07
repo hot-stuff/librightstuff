@@ -33,14 +33,14 @@ namespace hotstuff {
 HotStuffCore::HotStuffCore(ReplicaID id,
                             privkey_bt &&priv_key):
         b0(new Block(true, 1)),
-        bexec(b0),
+        b_exec(b0),
         vheight(0),
         view(0),
         view_trans(false),
         blame_qc(nullptr),
         priv_key(std::move(priv_key)),
         tails{b0},
-        neg_vote(false),
+        vote_disabled(false),
         id(id),
         storage(new EntityStorage()) {
     storage->add_blk(b0);
@@ -94,27 +94,28 @@ void HotStuffCore::update_hqc(const block_t &_hqc, const quorum_cert_bt &qc) {
     }
 }
 
-void HotStuffCore::check_commit(const block_t &p) {
+void HotStuffCore::check_commit(const block_t &blk) {
     std::vector<block_t> commit_queue;
     block_t b;
-    for (b = p; b->height > bexec->height; b = b->parents[0])
+    for (b = blk; b->height > b_exec->height; b = b->parents[0])
     { /* TODO: also commit the uncles/aunts */
         commit_queue.push_back(b);
     }
-    if (b != bexec)
+    if (b != b_exec)
         throw std::runtime_error("safety breached :( " +
-                                std::string(*p) + " " +
-                                std::string(*bexec));
+                                std::string(*blk) + " " +
+                                std::string(*b_exec));
     for (auto it = commit_queue.rbegin(); it != commit_queue.rend(); it++)
     {
         const block_t &blk = *it;
         blk->decision = 1;
+        do_consensus(blk);
         LOG_PROTO("commit %s", std::string(*blk).c_str());
         for (size_t i = 0; i < blk->cmds.size(); i++)
             do_decide(Finality(id, 1, i, blk->height,
                                 blk->cmds[i], blk->get_hash()));
     }
-    bexec = p;
+    b_exec = blk;
 }
 
 // 2. Vote
@@ -160,32 +161,23 @@ void HotStuffCore::_new_view() {
     set_viewtrans_timer(2 * config.delta);
 }
 
-void HotStuffCore::on_propose(const std::vector<uint256_t> &cmds,
+block_t HotStuffCore::on_propose(const std::vector<uint256_t> &cmds,
                             const std::vector<block_t> &parents,
                             bytearray_t &&extra) {
     if (view_trans)
     {
         LOG_WARN("PaceMaker tries to propose during view transition");
-        return;
+        return nullptr;
     }
     if (parents.empty())
         throw std::runtime_error("empty parents");
     for (const auto &_: parents) tails.erase(_);
-    block_t p = parents[0];
-    quorum_cert_bt qc = nullptr;
-    block_t qc_ref = nullptr;
-    /* a block can optionally carray a QC */
-    if (p->voted.size() >= config.nmajority)
-    {
-        qc = p->self_qc->clone();
-        qc_ref = p;
-    }
     /* create the new block */
     block_t bnew = storage->add_blk(
         new Block(parents, cmds,
-            std::move(qc), std::move(extra),
-            p->height + 1,
-            qc_ref,
+            hqc.second->clone(), std::move(extra),
+            parents[0]->height + 1,
+            hqc.first,
             nullptr
         ));
     const uint256_t bnew_hash = bnew->get_hash();
@@ -202,6 +194,7 @@ void HotStuffCore::on_propose(const std::vector<uint256_t> &cmds,
     on_propose_(prop);
     /* boradcast to other replicas */
     do_broadcast_proposal(prop);
+    return bnew;
 }
 
 void HotStuffCore::on_receive_proposal(const Proposal &prop) {
@@ -245,13 +238,14 @@ void HotStuffCore::on_receive_proposal(const Proposal &prop) {
     finished_propose[bnew] = true;
     on_receive_proposal_(prop);
     // check if the proposal extends the highest certified block
-    if (opinion) _vote(bnew);
+    if (opinion && !vote_disabled) _vote(bnew);
 }
 
 void HotStuffCore::on_receive_vote(const Vote &vote) {
     LOG_PROTO("got %s", std::string(vote).c_str());
     LOG_PROTO("now state: %s", std::string(*this).c_str());
     block_t blk = get_delivered_blk(vote.blk_hash);
+    assert(vote.cert);
     if (!finished_propose[blk])
     {
         // FIXME: fill voter as proposer as a quickfix here, may be inaccurate
@@ -269,15 +263,14 @@ void HotStuffCore::on_receive_vote(const Vote &vote) {
     auto &qc = blk->self_qc;
     if (qc == nullptr)
     {
-        //LOG_WARN("vote for block not proposed by itself");
         qc = create_quorum_cert(Vote::proof_obj_hash(blk->get_hash()));
     }
     qc->add_part(vote.voter, *vote.cert);
     if (qsize + 1 == config.nmajority)
     {
         qc->compute();
-        on_qc_finish(blk);
         update_hqc(blk, qc);
+        on_qc_finish(blk);
     }
 }
 
@@ -344,7 +337,7 @@ void HotStuffCore::on_init(uint32_t nfaulty, double delta) {
 void HotStuffCore::prune(uint32_t staleness) {
     block_t start;
     /* skip the blocks */
-    for (start = bexec; staleness; staleness--, start = start->parents[0])
+    for (start = b_exec; staleness; staleness--, start = start->parents[0])
         if (!start->parents.size()) return;
     std::stack<block_t> s;
     start->qc_ref = nullptr;
@@ -452,7 +445,7 @@ HotStuffCore::operator std::string () const {
     s << "<hotstuff "
       << "hqc=" << get_hex10(hqc.first->get_hash()) << " "
       << "hqc.height=" << std::to_string(hqc.first->height) << " "
-      << "bexec=" << get_hex10(bexec->get_hash()) << " "
+      << "b_exec=" << get_hex10(b_exec->get_hash()) << " "
       << "vheight=" << std::to_string(vheight) << " "
       << "view=" << std::to_string(view) << " "
       << "tails=" << std::to_string(tails.size()) << ">";

@@ -41,8 +41,8 @@ class HotStuffCore {
     block_t b0;                                  /** the genesis block */
     /* === state variables === */
     /** block containing the QC for the highest block having one */
-    std::pair<block_t, quorum_cert_bt> hqc;
-    block_t bexec;                            /**< last executed block */
+    std::pair<block_t, quorum_cert_bt> hqc;   /**< highest QC */
+    block_t b_exec;                            /**< last executed block */
     uint32_t vheight;          /**< height of the block last voted for */
     uint32_t nheight;          /**< height of the block last notified for */
     uint32_t view;             /**< the current view number */
@@ -68,7 +68,7 @@ class HotStuffCore {
     promise_t view_trans_waiting;
     /* == feature switches == */
     /** always vote negatively, useful for some PaceMakers */
-    bool neg_vote;
+    bool vote_disabled;
 
     block_t get_delivered_blk(const uint256_t &blk_hash);
     void sanity_check_delivered(const block_t &blk);
@@ -128,7 +128,7 @@ class HotStuffCore {
     /** Call to submit new commands to be decided (executed). "Parents" must
      * contain at least one block, and the first block is the actual parent,
      * while the others are uncles/aunts */
-    void on_propose(const std::vector<uint256_t> &cmds,
+    block_t on_propose(const std::vector<uint256_t> &cmds,
                     const std::vector<block_t> &parents,
                     bytearray_t &&extra = bytearray_t());
 
@@ -141,6 +141,7 @@ class HotStuffCore {
     protected:
     /** Called by HotStuffCore upon the decision being made for cmd. */
     virtual void do_decide(Finality &&fin) = 0;
+    virtual void do_consensus(const block_t &blk) = 0;
     /** Called by HotStuffCore upon broadcasting a new proposal.
      * The user should send the proposal message to all replicas except for
      * itself. */
@@ -201,7 +202,7 @@ class HotStuffCore {
     const std::set<block_t, BlockHeightCmp> get_tails() const { return tails; }
     uint32_t get_view() const { return view; }
     operator std::string () const;
-    void set_neg_vote(bool _neg_vote) { neg_vote = _neg_vote; }
+    void set_vote_disabled(bool f) { vote_disabled = f; }
 };
 
 

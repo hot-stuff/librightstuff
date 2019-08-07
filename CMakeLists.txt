@@ -78,22 +78,23 @@ option(HOTSTUFF_NORMAL_LOG "enable normal log" ON)
 option(HOTSTUFF_PROTO_LOG "enable protocol log" OFF)
 option(HOTSTUFF_MSG_STAT "eanble message statistics" ON)
 option(HOTSTUFF_BLK_PROFILE "enable block profiling" OFF)
+option(BUILD_EXAMPLES "build examples" ON)
 
 configure_file(src/config.h.in include/hotstuff/config.h @ONLY)
 
-# add executables
+# build examples
+if(BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()
 
-add_executable(hotstuff-app
-    src/hotstuff_app.cpp)
-target_link_libraries(hotstuff-app hotstuff_static)
-
-add_executable(hotstuff-client
-    src/hotstuff_client.cpp)
-target_link_libraries(hotstuff-client hotstuff_static)
-
+# build tools
 add_executable(hotstuff-keygen
     src/hotstuff_keygen.cpp)
 target_link_libraries(hotstuff-keygen hotstuff_static)
+
+add_executable(hotstuff-tls-keygen
+    src/hotstuff_tls_keygen.cpp)
+target_link_libraries(hotstuff-tls-keygen hotstuff_static)
 
 find_package(Doxygen)
 if (DOXYGEN_FOUND)

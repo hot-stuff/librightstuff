@@ -19,7 +19,7 @@
 #define _HOTSTUFF_LIVENESS_H
 
 #include "salticidae/util.h"
-#include "hotstuff/consensus.h"
+#include "hotstuff/hotstuff.h"
 
 namespace hotstuff {
 
@@ -51,31 +51,31 @@ class PaceMaker {
     virtual promise_t beat_resp(ReplicaID last_proposer) = 0;
     /** Impeach the current proposer. */
     virtual void impeach() {}
+    virtual void on_consensus(const block_t &) {}
     virtual size_t get_pending_size() = 0;
 };
 
 using pacemaker_bt = BoxObj<PaceMaker>;
 
-/** Parent selection implementation for PaceMaker: select all parents.
- * PaceMakers derived from this class will select the highest block as the
- * direct parent, while including other tail blocks (up to parent_limit) as
- * uncles/aunts. */
-class PMAllParents: public virtual PaceMaker {
+/** Parent selection implementation for PaceMaker: select the highest tail that
+ * follows the current hqc block. */
+class PMHighTail: public virtual PaceMaker {
     block_t hqc_tail;
     const int32_t parent_limit;         /**< maximum number of parents */
+
+    bool check_ancestry(const block_t &_a, const block_t &_b) {
+        block_t b;
+        for (b = _b;
+            b->get_height() > _a->get_height();
+            b = b->get_parents()[0]);
+        return b == _a;
+    }
     
     void reg_hqc_update() {
         hsc->async_hqc_update().then([this](const block_t &hqc) {
-            const auto &pref = hqc;
-            for (const auto &blk: hsc->get_tails())
-            {
-                block_t b;
-                for (b = blk;
-                    b->get_height() > pref->get_height();
-                    b = b->get_parents()[0]);
-                if (b == pref && blk->get_height() > hqc_tail->get_height())
-                    hqc_tail = blk;
-            }
+            for (const auto &tail: hsc->get_tails())
+                if (check_ancestry(hqc, tail) && tail->get_height() > hqc_tail->get_height())
+                    hqc_tail = tail;
             reg_hqc_update();
         });
     }
@@ -89,20 +89,16 @@ class PMAllParents: public virtual PaceMaker {
 
     void reg_receive_proposal() {
         hsc->async_wait_receive_proposal().then([this](const Proposal &prop) {
-            const auto &pref = hsc->get_hqc();
+            const auto &hqc = hsc->get_hqc();
             const auto &blk = prop.blk;
-            block_t b;
-            for (b = blk;
-                b->get_height() > pref->get_height();
-                b = b->get_parents()[0]);
-            if (b == pref && blk->get_height() > hqc_tail->get_height())
+            if (check_ancestry(hqc, blk) && blk->get_height() > hqc_tail->get_height())
                 hqc_tail = blk;
             reg_receive_proposal();
         });
     }
 
     public:
-    PMAllParents(int32_t parent_limit): parent_limit(parent_limit) {}
+    PMHighTail(int32_t parent_limit): parent_limit(parent_limit) {}
     void init() {
         hqc_tail = hsc->get_genesis();
         reg_hqc_update();
@@ -113,19 +109,20 @@ class PMAllParents: public virtual PaceMaker {
     std::vector<block_t> get_parents() override {
         const auto &tails = hsc->get_tails();
         std::vector<block_t> parents{hqc_tail};
-        auto nparents = tails.size();
-        if (parent_limit > 0)
-            nparents = std::min(nparents, (size_t)parent_limit);
-        nparents--;
-        /* add the rest of tails as "uncles/aunts" */
-        for (const auto &blk: tails)
-        {
-            if (blk != hqc_tail)
-            {
-                parents.push_back(blk);
-                if (!--nparents) break;
-            }
-        }
+        // TODO: inclusive block chain
+        // auto nparents = tails.size();
+        // if (parent_limit > 0)
+        //     nparents = std::min(nparents, (size_t)parent_limit);
+        // nparents--;
+        // /* add the rest of tails as "uncles/aunts" */
+        // for (const auto &blk: tails)
+        // {
+        //     if (blk != hqc_tail)
+        //     {
+        //         parents.push_back(blk);
+        //         if (!--nparents) break;
+        //     }
+        // }
         return std::move(parents);
     }
 };
@@ -169,29 +166,6 @@ class PMWaitQC: public virtual PaceMaker {
     public:
 
     size_t get_pending_size() override { return pending_beats.size(); }
-    void on_view_trans() { locked = true; }
-    void on_view_change() {
-        ReplicaID proposer = get_proposer();
-        if (proposer != hsc->get_id())
-        {
-            HOTSTUFF_LOG_INFO("%d drop %zu beats", proposer, pending_beats.size());
-            while (!pending_beats.empty())
-            {
-                auto pm = pending_beats.front();
-                pending_beats.pop();
-                pm.resolve(proposer);
-            }
-            last_proposed = hsc->get_genesis();
-            locked = false;
-        }
-        else
-        {
-            HOTSTUFF_LOG_INFO("resume %zu beats", pending_beats.size());
-            last_proposed = hsc->get_genesis();
-            locked = false;
-            schedule_next();
-        }
-    }
 
     void init() {
         last_proposed = hsc->get_genesis();
@@ -218,59 +192,231 @@ class PMWaitQC: public virtual PaceMaker {
 };
 
 /** Naive PaceMaker where everyone can be a proposer at any moment. */
-struct PaceMakerDummy: public PMAllParents, public PMWaitQC {
+struct PaceMakerDummy: public PMHighTail, public PMWaitQC {
     PaceMakerDummy(int32_t parent_limit):
-        PMAllParents(parent_limit), PMWaitQC() {}
+        PMHighTail(parent_limit), PMWaitQC() {}
     void init(HotStuffCore *hsc) override {
         PaceMaker::init(hsc);
-        PMAllParents::init();
+        PMHighTail::init();
         PMWaitQC::init();
     }
 };
 
-/** Naive PaceMaker where everyone can be a proposer at any moment. */
-struct PaceMakerRR: public PaceMakerDummy {
-    ReplicaID init_proposer;
-    promise_t pm_view_change;
-    promise_t pm_view_trans;
-
-    void view_change() {
-        pm_view_change.reject();
-        pm_view_change = hsc->async_wait_view_change().then([this]() {
-            PMWaitQC::on_view_change();
-            view_change();
-        });
-    }
-
-    void view_trans() {
-        pm_view_trans.reject();
-        pm_view_trans = hsc->async_wait_view_trans().then([this]() {
-            PMWaitQC::on_view_trans();
-            view_trans();
-        });
-    }
+/** PaceMakerDummy with a fixed proposer. */
+class PaceMakerDummyFixed: public PaceMakerDummy {
+    ReplicaID proposer;
 
     public:
-    PaceMakerRR(ReplicaID init_proposer,
-                int32_t parent_limit):
+    PaceMakerDummyFixed(ReplicaID proposer,
+                        int32_t parent_limit):
         PaceMakerDummy(parent_limit),
-        init_proposer(init_proposer) {}
-
-    void init(HotStuffCore *hsc) override {
-        PaceMakerDummy::init(hsc);
-        view_change();
-        view_trans();
-    }
-    // TODO: use async_wait_view_change to rotate the proposer
+        proposer(proposer) {}
 
     ReplicaID get_proposer() override {
-        return (init_proposer + hsc->get_view()) % hsc->get_config().nreplicas;
+        return proposer;
     }
 
     promise_t beat_resp(ReplicaID) override {
         return promise_t([this](promise_t &pm) {
-            pm.resolve(get_proposer());
+            pm.resolve(proposer);
         });
+    }
+};
+
+/**
+ * Simple long-standing round-robin style proposer liveness gadget.
+ */
+class PMRoundRobinProposer: virtual public PaceMaker {
+    double base_timeout;
+    double exp_timeout;
+    double prop_delay;
+    EventContext ec;
+    /** QC timer or randomized timeout */
+    TimerEvent timer;
+    /** the proposer it believes */
+    ReplicaID proposer;
+    std::unordered_map<ReplicaID, block_t> prop_blk;
+    bool rotating;
+
+    /* extra state needed for a proposer */
+    std::queue<promise_t> pending_beats;
+    block_t last_proposed;
+    bool locked;
+    promise_t pm_qc_finish;
+    promise_t pm_wait_propose;
+    promise_t pm_qc_manual;
+
+    void reg_proposal() {
+        hsc->async_wait_proposal().then([this](const Proposal &prop) {
+            auto &pblk = prop_blk[hsc->get_id()];
+            if (!pblk) pblk = prop.blk;
+            if (rotating) reg_proposal();
+        });
+    }
+
+    void reg_receive_proposal() {
+        hsc->async_wait_receive_proposal().then([this](const Proposal &prop) {
+            auto &pblk = prop_blk[prop.proposer];
+            if (!pblk) pblk = prop.blk;
+            if (rotating) reg_receive_proposal();
+        });
+    }
+
+    void proposer_schedule_next() {
+        if (!pending_beats.empty() && !locked)
+        {
+            auto pm = pending_beats.front();
+            pending_beats.pop();
+            pm_qc_finish.reject();
+            (pm_qc_finish = hsc->async_qc_finish(last_proposed))
+                .then([this, pm]() {
+                    HOTSTUFF_LOG_PROTO("got QC, propose a new block");
+                    pm.resolve(proposer);
+                });
+            locked = true;
+        }
+    }
+
+    void proposer_update_last_proposed() {
+        pm_wait_propose.reject();
+        (pm_wait_propose = hsc->async_wait_proposal()).then(
+                [this](const Proposal &prop) {
+            last_proposed = prop.blk;
+            locked = false;
+            proposer_schedule_next();
+            proposer_update_last_proposed();
+        });
+    }
+
+    void do_new_consensus(int x, const std::vector<uint256_t> &cmds) {
+        auto blk = hsc->on_propose(cmds, get_parents(), bytearray_t());
+        pm_qc_manual.reject();
+        (pm_qc_manual = hsc->async_qc_finish(blk))
+            .then([this, x]() {
+                HOTSTUFF_LOG_PROTO("Pacemaker: got QC for block %d", x);
+#ifdef HOTSTUFF_TWO_STEP
+                if (x >= 2) return;
+#else
+                if (x >= 3) return;
+#endif
+                do_new_consensus(x + 1, std::vector<uint256_t>{});
+            });
+    }
+
+    void on_exp_timeout(TimerEvent &) {
+        if (proposer == hsc->get_id())
+            do_new_consensus(0, std::vector<uint256_t>{});
+        timer = TimerEvent(ec, [this](TimerEvent &){ rotate(); });
+        timer.add(prop_delay);
+    }
+
+    /* role transitions */
+
+    void rotate() {
+        reg_proposal();
+        reg_receive_proposal();
+        prop_blk.clear();
+        rotating = true;
+        proposer = (proposer + 1) % hsc->get_config().nreplicas;
+        HOTSTUFF_LOG_PROTO("Pacemaker: rotate to %d", proposer);
+        pm_qc_finish.reject();
+        pm_wait_propose.reject();
+        pm_qc_manual.reject();
+        // start timer
+        timer = TimerEvent(ec, salticidae::generic_bind(&PMRoundRobinProposer::on_exp_timeout, this, _1));
+        timer.add(exp_timeout);
+        exp_timeout *= 2;
+    }
+
+    void stop_rotate() {
+        timer.del();
+        HOTSTUFF_LOG_PROTO("Pacemaker: stop rotation at %d", proposer);
+        pm_qc_finish.reject();
+        pm_wait_propose.reject();
+        pm_qc_manual.reject();
+        rotating = false;
+        locked = false;
+        last_proposed = hsc->get_genesis();
+        proposer_update_last_proposed();
+        if (proposer == hsc->get_id())
+        {
+            auto hs = static_cast<hotstuff::HotStuffBase *>(hsc);
+            hs->do_elected();
+            hs->get_tcall().async_call([this, hs](salticidae::ThreadCall::Handle &) {
+                auto &pending = hs->get_decision_waiting();
+                if (!pending.size()) return;
+                HOTSTUFF_LOG_PROTO("reproposing pending commands");
+                std::vector<uint256_t> cmds;
+                for (auto &p: pending)
+                    cmds.push_back(p.first);
+                do_new_consensus(0, cmds);
+            });
+        }
+    }
+
+    protected:
+    void on_consensus(const block_t &blk) override {
+        timer.del();
+        exp_timeout = base_timeout;
+        if (prop_blk[proposer] == blk)
+            stop_rotate();
+    }
+
+    void impeach() override {
+        if (rotating) return;
+        rotate();
+        HOTSTUFF_LOG_INFO("schedule to impeach the proposer");
+    }
+
+    public:
+    PMRoundRobinProposer(const EventContext &ec,
+                        double base_timeout, double prop_delay):
+        base_timeout(base_timeout),
+        prop_delay(prop_delay),
+        ec(ec), proposer(0), rotating(false) {}
+
+    size_t get_pending_size() override { return pending_beats.size(); }
+
+    void init() {
+        exp_timeout = base_timeout;
+        stop_rotate();
+    }
+
+    ReplicaID get_proposer() override {
+        return proposer;
+    }
+
+    promise_t beat() override {
+        if (!rotating && proposer == hsc->get_id())
+        {
+            promise_t pm;
+            pending_beats.push(pm);
+            proposer_schedule_next();
+            return std::move(pm);
+        }
+        else
+            return promise_t([proposer=proposer](promise_t &pm) {
+                pm.resolve(proposer);
+            });
+    }
+
+    promise_t beat_resp(ReplicaID last_proposer) override {
+        return promise_t([this, last_proposer](promise_t &pm) {
+            pm.resolve(last_proposer);
+        });
+    }
+};
+
+struct PaceMakerRR: public PMHighTail, public PMRoundRobinProposer {
+    PaceMakerRR(EventContext ec, int32_t parent_limit,
+                double base_timeout = 1, double prop_delay = 1):
+        PMHighTail(parent_limit),
+        PMRoundRobinProposer(ec, base_timeout, prop_delay) {}
+
+    void init(HotStuffCore *hsc) override {
+        PaceMaker::init(hsc);
+        PMHighTail::init();
+        PMRoundRobinProposer::init();
     }
 };
 

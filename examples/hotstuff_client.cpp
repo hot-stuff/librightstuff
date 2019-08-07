@@ -37,7 +37,6 @@ using hotstuff::EventContext;
 using hotstuff::MsgReqCmd;
 using hotstuff::MsgRespCmd;
 using hotstuff::CommandDummy;
-using hotstuff::Finality;
 using hotstuff::HotStuffError;
 using hotstuff::uint256_t;
 using hotstuff::opcode_t;
@@ -49,15 +48,13 @@ size_t max_async_num;
 int max_iter_num;
 uint32_t cid;
 uint32_t cnt = 0;
-//uint32_t nfaulty;
+uint32_t nfaulty;
 
 struct Request {
-    ReplicaID rid;
     command_t cmd;
     size_t confirmed;
     salticidae::ElapsedTime et;
-    Request(ReplicaID rid, const command_t &cmd):
-        rid(rid), cmd(cmd), confirmed(0) { et.start(); }
+    Request(const command_t &cmd): cmd(cmd), confirmed(0) { et.start(); }
 };
 
 using Net = salticidae::MsgNetwork<opcode_t>;
@@ -70,21 +67,13 @@ Net mn(ec, Net::Config());
 
 void connect_all() {
     for (size_t i = 0; i < replicas.size(); i++)
-        conns.insert(std::make_pair(i, mn.connect(replicas[i])));
-}
-
-void set_proposer(ReplicaID rid) {
-    proposer = rid;
-//    auto it = conns.find(rid);
-//    if (it == conns.end())
-//        conns.insert(std::make_pair(rid, mn.connect(replicas[rid])));
+        conns.insert(std::make_pair(i, mn.connect_sync(replicas[i])));
 }
 
 bool try_send(bool check = true) {
     if ((!check || waiting.size() < max_async_num) && max_iter_num)
     {
         auto cmd = new CommandDummy(cid, cnt++);
-        //mn.send_msg(MsgReqCmd(*cmd), *conns.at(proposer));
         MsgReqCmd msg(*cmd);
         for (auto &p: conns) mn.send_msg(msg, p.second);
 #ifndef HOTSTUFF_ENABLE_BENCHMARK
@@ -92,7 +81,7 @@ bool try_send(bool check = true) {
                             get_hex(cmd->get_hash()).c_str());
 #endif
         waiting.insert(std::make_pair(
-            cmd->get_hash(), Request(proposer, cmd)));
+            cmd->get_hash(), Request(cmd)));
         if (max_iter_num > 0)
             max_iter_num--;
         return true;
@@ -108,24 +97,7 @@ void client_resp_cmd_handler(MsgRespCmd &&msg, const Net::conn_t &) {
     auto &et = it->second.et;
     if (it == waiting.end()) return;
     et.stop();
-//    if (fin.rid != proposer)
-//    {
-//        HOTSTUFF_LOG_INFO("reconnect to the new proposer");
-//        set_proposer(fin.rid);
-//    }
-//    if (fin.rid != it->second.rid)
-//    {
-//        mn.send_msg(MsgReqCmd(*(waiting.find(cmd_hash)->second.cmd)),
-//                    *conns.at(proposer));
-//#ifndef HOTSTUFF_ENABLE_BENCHMARK
-//        HOTSTUFF_LOG_INFO("resend cmd %.10s",
-//                            get_hex(cmd_hash).c_str());
-//#endif
-//        et.start();
-//        it->second.rid = proposer;
-//        return;
-//    }
-//    if (++it->second.confirmed <= nfaulty) return; // wait for f + 1 ack
+    if (++it->second.confirmed <= nfaulty) return; // wait for f + 1 ack
 #ifndef HOTSTUFF_ENABLE_BENCHMARK
     HOTSTUFF_LOG_INFO("got %s, wall: %.3f, cpu: %.3f",
                         std::string(fin).c_str(),
@@ -183,13 +155,13 @@ int main(int argc, char **argv) {
     auto idx = opt_idx->get();
     max_iter_num = opt_max_iter_num->get();
     max_async_num = opt_max_async_num->get();
-    std::vector<std::pair<std::string, std::string>> raw;
+    std::vector<std::string> raw;
     for (const auto &s: opt_replicas->get())
     {
         auto res = salticidae::trim_all(salticidae::split(s, ","));
-        if (res.size() != 2)
+        if (res.size() < 1)
             throw HotStuffError("format error");
-        raw.push_back(std::make_pair(res[0], res[1]));
+        raw.push_back(res[0]);
     }
 
     if (!(0 <= idx && (size_t)idx < raw.size() && raw.size() > 0))
@@ -197,15 +169,14 @@ int main(int argc, char **argv) {
     cid = opt_cid->get() != -1 ? opt_cid->get() : idx;
     for (const auto &p: raw)
     {
-        auto _p = split_ip_port_cport(p.first);
+        auto _p = split_ip_port_cport(p);
         size_t _;
         replicas.push_back(NetAddr(NetAddr(_p.first).ip, htons(stoi(_p.second, &_))));
     }
 
-    //nfaulty = (replicas.size() - 1) / 3;
-    //HOTSTUFF_LOG_INFO("nfaulty = %zu", nfaulty);
+    nfaulty = (replicas.size() - 1) / 2;
+    HOTSTUFF_LOG_INFO("nfaulty = %zu", nfaulty);
     connect_all();
-    set_proposer(idx);
     while (try_send());
     ec.dispatch();
 
