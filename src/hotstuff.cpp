@@ -539,7 +539,8 @@ void HotStuffBase::start(
 
 #ifdef DFINITY_VC_SIM
     cmd_pending.reg_handler(ec, [this](cmd_queue_t &q) {
-        on_force_new_view();
+        if (!is_view_trans())
+            pmaker->beat().then([this](ReplicaID) { on_force_new_view(); });
         return false;
     });
 #else
@@ -608,8 +609,6 @@ void HotStuffBase::do_dfinity_gen_block() {
     std::pair<uint256_t, commit_cb_t> e;
     while (cmd_pending.try_dequeue(e))
     {
-        ReplicaID proposer = pmaker->get_proposer();
-
         const auto &cmd_hash = e.first;
         auto it = decision_waiting.find(cmd_hash);
         if (it == decision_waiting.end())
@@ -618,7 +617,6 @@ void HotStuffBase::do_dfinity_gen_block() {
         }
         else
             e.second(Finality(id, 0, 0, 0, cmd_hash, uint256_t()));
-        if (proposer != get_id()) continue;
         cmd_pending_buffer.push(cmd_hash);
         if (cmd_pending_buffer.size() >= blk_size)
             break;

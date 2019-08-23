@@ -212,6 +212,7 @@ class Block {
           << "id="  << get_hex10(hash) << " "
           << "height=" << std::to_string(height) << " "
           << "parent=" << get_hex10(parent_hashes[0]) << " "
+          << "ncmd=" << std::to_string(cmds.size()) << " "
           << "qc_ref=" << (qc_ref ? get_hex10(qc_ref->get_hash()) : "null") << ">";
         return std::move(s);
     }

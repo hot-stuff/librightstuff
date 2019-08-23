@@ -38,7 +38,6 @@ HotStuffCore::HotStuffCore(ReplicaID id,
         view(0),
         view_trans(false),
 #ifdef DFINITY_VC_SIM
-        qc_ready(true),
         leader_prop(nullptr),
 #endif
         blame_qc(nullptr),
@@ -123,7 +122,8 @@ void HotStuffCore::check_commit(const block_t &blk) {
 }
 
 // 2. Vote
-void HotStuffCore::_vote(const block_t &blk) {
+void HotStuffCore::_vote(const block_t &_blk) {
+    auto blk = _blk;
     const auto &blk_hash = blk->get_hash();
     LOG_PROTO("vote for %s", get_hex10(blk_hash).c_str());
     Vote vote(id, blk_hash,
@@ -151,13 +151,11 @@ void HotStuffCore::_blame() {
 
 #ifdef DFINITY_VC_SIM
 void HotStuffCore::on_force_new_view() {
-    if (!view_trans && qc_ready)
-    {
-        qc_ready = false;
-        _new_view();
-    }
+    LOG_WARN("force new view");
+    _new_view();
 }
 void HotStuffCore::_new_view() {
+    assert(!view_trans);
     // TODO: are blame messages needed here?
     LOG_INFO("preparing dfinity new-view");
     view_trans = true;
@@ -245,8 +243,7 @@ void HotStuffCore::_process_proposal(const Proposal &prop) {
     if (finished_propose[bnew]) return;
 #endif
     sanity_check_delivered(bnew);
-    if (bnew->qc_ref)
-        update_hqc(bnew->qc_ref, bnew->qc);
+    update_hqc(bnew->qc_ref, bnew->qc);
     bool opinion = false;
     auto &pslot = proposals[bnew->height];
     if (pslot.size() <= 1)
@@ -334,10 +331,6 @@ void HotStuffCore::on_receive_vote(const Vote &vote) {
         qc->compute();
         update_hqc(blk, qc);
         on_qc_finish(blk);
-#ifdef DFINITY_VC_SIM
-        qc_ready = true;
-        on_force_new_view();
-#endif
     }
 }
 

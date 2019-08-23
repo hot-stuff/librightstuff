@@ -51,7 +51,6 @@ class HotStuffCore {
     bool progress; /**< whether heard a proposal in the current view: this->view */
     bool view_trans; /**< whether the replica is in-between the views */
 #ifdef DFINITY_VC_SIM
-    bool qc_ready;
     BoxObj<Proposal> leader_prop;
 #endif
     std::unordered_map<uint32_t, std::unordered_set<block_t>> proposals;
@@ -65,7 +64,7 @@ class HotStuffCore {
 
     /* === auxilliary variables === */
     privkey_bt priv_key;            /**< private key for signing votes */
-    std::set<block_t, BlockHeightCmp> tails;   /**< set of tail blocks */
+    std::set<block_t> tails;   /**< set of tail blocks */
     ReplicaConfig config;                   /**< replica configuration */
     /* === async event queues === */
     std::unordered_map<block_t, promise_t> qc_waiting;
@@ -136,6 +135,7 @@ class HotStuffCore {
 
 #ifdef DFINITY_VC_SIM
     void on_force_new_view();
+    bool is_view_trans() { return view_trans; }
 #endif
 
     /** Call to submit new commands to be decided (executed). "Parents" must
@@ -216,7 +216,7 @@ class HotStuffCore {
     const block_t &get_hqc() { return hqc.first; }
     const ReplicaConfig &get_config() { return config; }
     ReplicaID get_id() const { return id; }
-    const std::set<block_t, BlockHeightCmp> get_tails() const { return tails; }
+    const std::set<block_t> get_tails() const { return tails; }
     uint32_t get_view() const { return view; }
     operator std::string () const;
     void set_vote_disabled(bool f) { vote_disabled = f; }
@@ -378,14 +378,15 @@ struct Notify: public Serializable {
 
     bool verify() const {
         assert(hsc != nullptr);
-        return qc->verify(hsc->get_config()) &&
+        return (qc->verify(hsc->get_config()) || blk_hash == hsc->get_genesis()->get_hash()) &&
             qc->get_obj_hash() == Vote::proof_obj_hash(blk_hash);
     }
 
     promise_t verify(VeriPool &vpool) const {
         assert(hsc != nullptr);
         return qc->verify(hsc->get_config(), vpool).then([this](bool result) {
-            return result && qc->get_obj_hash() == Vote::proof_obj_hash(blk_hash);
+            return (result || blk_hash == hsc->get_genesis()->get_hash()) &&
+                qc->get_obj_hash() == Vote::proof_obj_hash(blk_hash);
         });
     }
 

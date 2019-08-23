@@ -74,6 +74,7 @@ class PMHighTail: public virtual PaceMaker {
     
     void reg_hqc_update() {
         hsc->async_hqc_update().then([this](const block_t &hqc) {
+            hqc_tail = hqc;
             for (const auto &tail: hsc->get_tails())
                 if (check_ancestry(hqc, tail) && tail->get_height() > hqc_tail->get_height())
                     hqc_tail = tail;
@@ -424,9 +425,12 @@ struct PaceMakerRR: public PMHighTail, public PMRoundRobinProposer {
     }
 };
 
-struct PaceMakerDfinity: public PaceMakerDummy {
+struct PaceMakerDfinity: public PMHighTail {
     ReplicaID proposer;
     promise_t pm_view_trans;
+    promise_t pm_qc_finish;
+    promise_t pm_wait_propose;
+    block_t last_proposed;
 
     void view_trans() {
         pm_view_trans.reject();
@@ -436,17 +440,37 @@ struct PaceMakerDfinity: public PaceMakerDummy {
         });
     }
 
+    void update_last_proposed() {
+        pm_wait_propose.reject();
+        (pm_wait_propose = hsc->async_wait_proposal()).then(
+                [this](const Proposal &prop) {
+            last_proposed = prop.blk;
+            update_last_proposed();
+        });
+    }
+
     public:
     PaceMakerDfinity(ReplicaID proposer,
                 int32_t parent_limit):
-        PaceMakerDummy(parent_limit),
+        PMHighTail(parent_limit),
         proposer(proposer) {}
 
     void init(HotStuffCore *hsc) override {
-        PaceMakerDummy::init(hsc);
-        PMWaitQC::lock();
-        //view_change();
+        PaceMaker::init(hsc);
+        PMHighTail::init();
+        last_proposed = hsc->get_genesis();
+        update_last_proposed();
         view_trans();
+    }
+
+    promise_t beat() override {
+        promise_t pm;
+        pm_qc_finish.reject();
+        (pm_qc_finish = hsc->async_qc_finish(last_proposed))
+            .then([this, pm]() {
+            pm.resolve(proposer);
+        });
+        return std::move(pm);
     }
 
     ReplicaID get_proposer() override { return proposer; }
@@ -457,6 +481,8 @@ struct PaceMakerDfinity: public PaceMakerDummy {
             pm.resolve(proposer);
         });
     }
+
+    size_t get_pending_size() { return 0; }
 };
 
 
