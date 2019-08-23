@@ -297,6 +297,9 @@ class HotStuffBase: public HotStuffCore {
 
     void do_decide(Finality &&) override;
     void do_consensus(const block_t &blk) override;
+#ifdef DFINITY_VC_SIM
+    void do_dfinity_gen_block() override;
+#endif
 
     protected:
 
@@ -322,7 +325,6 @@ class HotStuffBase: public HotStuffCore {
     void exec_command(uint256_t cmd_hash, commit_cb_t callback);
     void start(std::vector<std::tuple<NetAddr, pubkey_bt, uint256_t>> &&replicas,
                 double delta, bool ec_loop = false);
-
     size_t size() const { return peers.size(); }
     const auto &get_decision_waiting() const { return decision_waiting; }
     ThreadCall &get_tcall() { return tcall; }

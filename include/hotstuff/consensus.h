@@ -50,8 +50,16 @@ class HotStuffCore {
     /* === only valid for the current view === */
     bool progress; /**< whether heard a proposal in the current view: this->view */
     bool view_trans; /**< whether the replica is in-between the views */
+#ifdef DFINITY_VC_SIM
+    bool qc_ready;
+    BoxObj<Proposal> leader_prop;
+#endif
     std::unordered_map<uint32_t, std::unordered_set<block_t>> proposals;
+#ifdef DFINITY_VC_SIM
+    std::unordered_map<uint256_t, bool> finished_propose;
+#else
     std::unordered_map<block_t, bool> finished_propose;
+#endif
     quorum_cert_bt blame_qc;
     std::unordered_set<ReplicaID> blamed;
 
@@ -83,6 +91,7 @@ class HotStuffCore {
     void _vote(const block_t &blk);
     void _blame();
     void _new_view();
+    void _process_proposal(const Proposal &prop);
 
     protected:
     ReplicaID id;                  /**< identity of the replica itself */
@@ -125,6 +134,10 @@ class HotStuffCore {
     void on_blame_timeout();
     void on_viewtrans_timeout();
 
+#ifdef DFINITY_VC_SIM
+    void on_force_new_view();
+#endif
+
     /** Call to submit new commands to be decided (executed). "Parents" must
      * contain at least one block, and the first block is the actual parent,
      * while the others are uncles/aunts */
@@ -142,6 +155,10 @@ class HotStuffCore {
     /** Called by HotStuffCore upon the decision being made for cmd. */
     virtual void do_decide(Finality &&fin) = 0;
     virtual void do_consensus(const block_t &blk) = 0;
+#ifdef DFINITY_VC_SIM
+    virtual void do_dfinity_gen_block() = 0;
+#endif
+
     /** Called by HotStuffCore upon broadcasting a new proposal.
      * The user should send the proposal message to all replicas except for
      * itself. */
@@ -214,6 +231,9 @@ enum ProofType {
 /** Abstraction for proposal messages. */
 struct Proposal: public Serializable {
     ReplicaID proposer;
+#ifdef DFINITY_VC_SIM
+    uint256_t vrf_hash; /* simulate VRF hash (without verification) */
+#endif
     /** block being proposed */
     block_t blk;
     /** handle of the core object to allow polymorphism. The user should use
@@ -222,18 +242,30 @@ struct Proposal: public Serializable {
 
     Proposal(): blk(nullptr), hsc(nullptr) {}
     Proposal(ReplicaID proposer,
+#ifdef DFINITY_VC_SIM
+            const uint256_t &vrf_hash,
+#endif
             const block_t &blk,
             HotStuffCore *hsc):
         proposer(proposer),
+#ifdef DFINITY_VC_SIM
+        vrf_hash(vrf_hash),
+#endif
         blk(blk), hsc(hsc) {}
 
     Proposal(const Proposal &other):
         proposer(other.proposer),
         blk(other.blk),
+#ifdef DFINITY_VC_SIM
+        vrf_hash(other.vrf_hash),
+#endif
         hsc(other.hsc) {}
 
     void serialize(DataStream &s) const override {
         s << proposer
+#ifdef DFINITY_VC_SIM
+          << vrf_hash
+#endif
           << *blk;
     }
 
@@ -242,6 +274,7 @@ struct Proposal: public Serializable {
     operator std::string () const {
         DataStream s;
         s << "<proposal "
+          << "vrf=" << get_hex(vrf_hash) << " "
           << "rid=" << std::to_string(proposer) << " "
           << "blk=" << get_hex10(blk->get_hash()) << ">";
         return std::move(s);
@@ -497,6 +530,9 @@ struct BlameNotify: public Serializable {
 inline void Proposal::unserialize(DataStream &s) {
     assert(hsc != nullptr);
     s >> proposer;
+#ifdef DFINITY_VC_SIM
+    s >> vrf_hash;
+#endif
     Block _blk;
     _blk.unserialize(s, hsc);
     blk = hsc->storage->add_blk(std::move(_blk), hsc->get_config());

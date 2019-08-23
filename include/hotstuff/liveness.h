@@ -41,6 +41,7 @@ class PaceMaker {
     virtual promise_t beat() = 0;
     /** Get the current proposer. */
     virtual ReplicaID get_proposer() = 0;
+    virtual void set_proposer(ReplicaID) {}
     /** Select the parent blocks for a new block.
      * @return Parent blocks. The block at index 0 is the direct parent, while
      * the others are uncles/aunts. The returned vector should be non-empty. */
@@ -162,6 +163,9 @@ class PMWaitQC: public virtual PaceMaker {
             update_last_proposed();
         });
     }
+
+    void lock() { locked = true; }
+    void unlock() { locked = false; }
 
     public:
 
@@ -419,6 +423,42 @@ struct PaceMakerRR: public PMHighTail, public PMRoundRobinProposer {
         PMRoundRobinProposer::init();
     }
 };
+
+struct PaceMakerDfinity: public PaceMakerDummy {
+    ReplicaID proposer;
+    promise_t pm_view_trans;
+
+    void view_trans() {
+        pm_view_trans.reject();
+        pm_view_trans = hsc->async_wait_view_trans().then([this]() {
+            HOTSTUFF_LOG_PROTO("dfinity pmaker view trans");
+            view_trans();
+        });
+    }
+
+    public:
+    PaceMakerDfinity(ReplicaID proposer,
+                int32_t parent_limit):
+        PaceMakerDummy(parent_limit),
+        proposer(proposer) {}
+
+    void init(HotStuffCore *hsc) override {
+        PaceMakerDummy::init(hsc);
+        PMWaitQC::lock();
+        //view_change();
+        view_trans();
+    }
+
+    ReplicaID get_proposer() override { return proposer; }
+    void set_proposer(ReplicaID p) override { proposer = p; }
+
+    promise_t beat_resp(ReplicaID) override {
+        return promise_t([this](promise_t &pm) {
+            pm.resolve(proposer);
+        });
+    }
+};
+
 
 }
 

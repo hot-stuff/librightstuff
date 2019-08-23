@@ -537,6 +537,12 @@ void HotStuffBase::start(
     if (ec_loop)
         ec.dispatch();
 
+#ifdef DFINITY_VC_SIM
+    cmd_pending.reg_handler(ec, [this](cmd_queue_t &q) {
+        on_force_new_view();
+        return false;
+    });
+#else
     cmd_pending.reg_handler(ec, [this](cmd_queue_t &q) {
         std::pair<uint256_t, commit_cb_t> e;
         while (q.try_dequeue(e))
@@ -594,6 +600,37 @@ void HotStuffBase::start(
         }
         return false;
     });
+#endif
 }
+
+#ifdef DFINITY_VC_SIM
+void HotStuffBase::do_dfinity_gen_block() {
+    std::pair<uint256_t, commit_cb_t> e;
+    while (cmd_pending.try_dequeue(e))
+    {
+        ReplicaID proposer = pmaker->get_proposer();
+
+        const auto &cmd_hash = e.first;
+        auto it = decision_waiting.find(cmd_hash);
+        if (it == decision_waiting.end())
+        {
+            it = decision_waiting.insert(std::make_pair(cmd_hash, e.second)).first;
+        }
+        else
+            e.second(Finality(id, 0, 0, 0, cmd_hash, uint256_t()));
+        if (proposer != get_id()) continue;
+        cmd_pending_buffer.push(cmd_hash);
+        if (cmd_pending_buffer.size() >= blk_size)
+            break;
+    }
+    std::vector<uint256_t> cmds;
+    while (!cmd_pending_buffer.empty())
+    {
+        cmds.push_back(cmd_pending_buffer.front());
+        cmd_pending_buffer.pop();
+    }
+    on_propose(cmds, pmaker->get_parents());
+}
+#endif
 
 }
