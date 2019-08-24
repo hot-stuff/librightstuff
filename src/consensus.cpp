@@ -37,9 +37,6 @@ HotStuffCore::HotStuffCore(ReplicaID id,
         vheight(0),
         view(0),
         view_trans(false),
-#ifdef DFINITY_VC_SIM
-        leader_prop(nullptr),
-#endif
         blame_qc(nullptr),
         priv_key(std::move(priv_key)),
         tails{b0},
@@ -64,8 +61,12 @@ block_t HotStuffCore::get_delivered_blk(const uint256_t &blk_hash) {
 bool HotStuffCore::on_deliver_blk(const block_t &blk) {
     if (blk->delivered)
     {
+#ifdef DFINITY_VC_SIM
+        return true;
+#else
         LOG_WARN("attempt to deliver a block twice");
         return false;
+#endif
     }
     blk->parents.clear();
     for (const auto &hash: blk->parent_hashes)
@@ -134,7 +135,11 @@ void HotStuffCore::_vote(const block_t &_blk) {
     on_receive_vote(vote);
 #endif
     do_broadcast_vote(vote);
+#ifdef DFINITY_VC_SIM
+    set_commit_timer(blk, 6 * config.delta);
+#else
     set_commit_timer(blk, 2 * config.delta);
+#endif
     //set_blame_timer(3 * config.delta);
 }
 
@@ -156,13 +161,11 @@ void HotStuffCore::on_force_new_view() {
 }
 void HotStuffCore::_new_view() {
     assert(!view_trans);
-    // TODO: are blame messages needed here?
-    LOG_INFO("preparing dfinity new-view");
     view_trans = true;
     do_dfinity_gen_block();
     on_view_trans();
-    //stop_commit_timer_all();
     set_viewtrans_timer(2 * config.delta);
+    LOG_INFO("dfinity new-view waits for %.2fs", 2 * config.delta);
 }
 #else
 // i. New-view
@@ -213,7 +216,7 @@ block_t HotStuffCore::on_propose(const std::vector<uint256_t> &cmds,
     if (!RAND_bytes(&rand_bytes[0], rand_bytes.size()))
         throw std::runtime_error("cannot get vrf");
     Proposal prop(id, uint256_t(rand_bytes), bnew, nullptr);
-    leader_prop = new Proposal(prop);
+    update_leading_proposal(prop);
 #else
     Proposal prop(id, bnew, nullptr);
 #endif
@@ -227,8 +230,8 @@ block_t HotStuffCore::on_propose(const std::vector<uint256_t> &cmds,
 #else
     finished_propose[bnew] = true;
     _vote(bnew);
-#endif
     on_propose_(prop);
+#endif
     /* boradcast to other replicas */
     do_broadcast_proposal(prop);
     return bnew;
@@ -286,25 +289,27 @@ void HotStuffCore::_process_proposal(const Proposal &prop) {
 
 void HotStuffCore::on_receive_proposal(const Proposal &prop) {
 #ifdef DFINITY_VC_SIM
+    if (prop.blk->height < hqc.first->height) return;
     if (finished_propose[prop.vrf_hash]) return;
 #endif
     LOG_PROTO("got %s", std::string(prop).c_str());
 #ifdef DFINITY_VC_SIM
     /* get the minimum of VRF values */
-    if (!leader_prop || prop.vrf_hash < leader_prop->vrf_hash)
-        leader_prop = new Proposal(prop);
+    update_leading_proposal(prop);
     finished_propose[prop.vrf_hash] = true;
+    if (prop.blk->height > hqc.first->height && !view_trans)
+        _new_view();
 #else
     _process_proposal(prop);
 #endif
 }
 
 void HotStuffCore::on_receive_vote(const Vote &vote) {
-    LOG_PROTO("got %s", std::string(vote).c_str());
-    LOG_PROTO("now state: %s", std::string(*this).c_str());
     block_t blk = get_delivered_blk(vote.blk_hash);
     assert(vote.cert);
-#ifndef DFINITY_VC_SIM
+#ifdef DFINITY_VC_SIM
+    if (blk->height < hqc.first->height) return;
+#else
     if (!finished_propose[blk])
     {
         // FIXME: fill voter as proposer as a quickfix here, may be inaccurate
@@ -313,6 +318,8 @@ void HotStuffCore::on_receive_vote(const Vote &vote) {
         on_receive_proposal(Proposal(vote.voter, blk, nullptr));
     }
 #endif
+    LOG_PROTO("got %s", std::string(vote).c_str());
+    LOG_PROTO("now state: %s", std::string(*this).c_str());
     size_t qsize = blk->voted.size();
     if (qsize >= config.nmajority) return;
     if (!blk->voted.insert(vote.voter).second)
@@ -374,24 +381,32 @@ void HotStuffCore::on_blame_timeout() {
 }
 
 #ifdef DFINITY_VC_SIM
+void HotStuffCore::update_leading_proposal(const Proposal &prop) {
+    auto &lp = leading_props[prop.blk->height];
+    if (!lp || prop.vrf_hash < lp->vrf_hash)
+        lp = new Proposal(prop);
+}
+#endif
+
+#ifdef DFINITY_VC_SIM
 void HotStuffCore::on_viewtrans_timeout() {
     // view change
     view++;
     view_trans = false;
     proposals.clear();
-    assert(leader_prop);
-    if (leader_prop->proposer == id)
-        _vote(leader_prop->blk);
+    auto prop = leading_props[view].get();
+    assert(prop);
+    if (prop->proposer == id)
+        _vote(prop->blk);
     else
-        _process_proposal(*leader_prop);
+        _process_proposal(*prop);
     on_view_change(); // notify the PaceMaker of the view change
-    LOG_INFO("entering view %d, leader is %d", view, leader_prop->proposer);
+    LOG_INFO("entering view %d, leader is %d", view, prop->proposer);
+    on_propose_(*prop);
+    do_schedule_new_view();
     // send the highest certified block
     Notify notify(hqc.first->get_hash(), hqc.second->clone(), this);
     do_notify(notify);
-    //if (leader_prop->proposer == id)
-    //{
-    //}
 }
 #else
 // TODO: Sync HS view change code needs to be rewritten
@@ -465,6 +480,7 @@ promise_t HotStuffCore::async_qc_finish(const block_t &blk) {
 }
 
 void HotStuffCore::on_qc_finish(const block_t &blk) {
+    HOTSTUFF_LOG_DEBUG("QC finished");
     auto it = qc_waiting.find(blk);
     if (it != qc_waiting.end())
     {

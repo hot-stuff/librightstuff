@@ -299,6 +299,7 @@ class HotStuffBase: public HotStuffCore {
     void do_consensus(const block_t &blk) override;
 #ifdef DFINITY_VC_SIM
     void do_dfinity_gen_block() override;
+    void do_schedule_new_view() override;
 #endif
 
     protected:

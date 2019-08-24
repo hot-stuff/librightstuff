@@ -51,7 +51,7 @@ class HotStuffCore {
     bool progress; /**< whether heard a proposal in the current view: this->view */
     bool view_trans; /**< whether the replica is in-between the views */
 #ifdef DFINITY_VC_SIM
-    BoxObj<Proposal> leader_prop;
+    std::unordered_map<uint32_t, BoxObj<Proposal>> leading_props;
 #endif
     std::unordered_map<uint32_t, std::unordered_set<block_t>> proposals;
 #ifdef DFINITY_VC_SIM
@@ -91,6 +91,9 @@ class HotStuffCore {
     void _blame();
     void _new_view();
     void _process_proposal(const Proposal &prop);
+#ifdef DFINITY_VC_SIM
+    void update_leading_proposal(const Proposal &prop);
+#endif
 
     protected:
     ReplicaID id;                  /**< identity of the replica itself */
@@ -157,6 +160,7 @@ class HotStuffCore {
     virtual void do_consensus(const block_t &blk) = 0;
 #ifdef DFINITY_VC_SIM
     virtual void do_dfinity_gen_block() = 0;
+    virtual void do_schedule_new_view() = 0;
 #endif
 
     /** Called by HotStuffCore upon broadcasting a new proposal.

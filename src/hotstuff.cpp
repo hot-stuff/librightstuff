@@ -539,8 +539,7 @@ void HotStuffBase::start(
 
 #ifdef DFINITY_VC_SIM
     cmd_pending.reg_handler(ec, [this](cmd_queue_t &q) {
-        if (!is_view_trans())
-            pmaker->beat().then([this](ReplicaID) { on_force_new_view(); });
+        do_schedule_new_view();
         return false;
     });
 #else
@@ -629,6 +628,15 @@ void HotStuffBase::do_dfinity_gen_block() {
     }
     on_propose(cmds, pmaker->get_parents());
 }
+
+void HotStuffBase::do_schedule_new_view() {
+    tcall.async_call([this](salticidae::ThreadCall::Handle &) {
+        HOTSTUFF_LOG_PROTO("tcall reg");
+        if (!is_view_trans())
+            pmaker->beat().then([this](ReplicaID) { on_force_new_view(); });
+    });
+}
+
 #endif
 
 }
