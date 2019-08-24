@@ -191,6 +191,9 @@ class HotStuffBase: public HotStuffCore {
     using cmd_queue_t = salticidae::MPSCQueueEventDriven<std::pair<uint256_t, commit_cb_t>>;
     cmd_queue_t cmd_pending;
     std::queue<uint256_t> cmd_pending_buffer;
+#ifdef DFINITY_VC_SIM
+    std::unordered_set<uint256_t> sealed_cmds;
+#endif
 
     /* statistics */
     uint64_t fetched;
@@ -300,6 +303,7 @@ class HotStuffBase: public HotStuffCore {
 #ifdef DFINITY_VC_SIM
     void do_dfinity_gen_block() override;
     void do_schedule_new_view() override;
+    void do_clean_up_cmds(const block_t &blk) override;
 #endif
 
     protected:

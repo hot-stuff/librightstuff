@@ -41,7 +41,6 @@ class PaceMaker {
     virtual promise_t beat() = 0;
     /** Get the current proposer. */
     virtual ReplicaID get_proposer() = 0;
-    virtual void set_proposer(ReplicaID) {}
     /** Select the parent blocks for a new block.
      * @return Parent blocks. The block at index 0 is the direct parent, while
      * the others are uncles/aunts. The returned vector should be non-empty. */
@@ -435,7 +434,7 @@ struct PaceMakerDfinity: public PMHighTail {
     void view_trans() {
         pm_view_trans.reject();
         pm_view_trans = hsc->async_wait_view_trans().then([this]() {
-            HOTSTUFF_LOG_PROTO("dfinity pmaker view trans");
+            HOTSTUFF_LOG_INFO("dfinity pmaker view trans");
             view_trans();
         });
     }
@@ -476,7 +475,6 @@ struct PaceMakerDfinity: public PMHighTail {
     }
 
     ReplicaID get_proposer() override { return proposer; }
-    void set_proposer(ReplicaID p) override { proposer = p; }
 
     promise_t beat_resp(ReplicaID) override {
         return promise_t([this](promise_t &pm) {

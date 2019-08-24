@@ -161,6 +161,7 @@ class HotStuffCore {
 #ifdef DFINITY_VC_SIM
     virtual void do_dfinity_gen_block() = 0;
     virtual void do_schedule_new_view() = 0;
+    virtual void do_clean_up_cmds(const block_t &blk) = 0;
 #endif
 
     /** Called by HotStuffCore upon broadcasting a new proposal.

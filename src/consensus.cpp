@@ -123,8 +123,12 @@ void HotStuffCore::check_commit(const block_t &blk) {
 }
 
 // 2. Vote
+#ifdef DFINITY_VC_SIM
 void HotStuffCore::_vote(const block_t &_blk) {
     auto blk = _blk;
+#else
+void HotStuffCore::_vote(const block_t &blk) {
+#endif
     const auto &blk_hash = blk->get_hash();
     LOG_PROTO("vote for %s", get_hex10(blk_hash).c_str());
     Vote vote(id, blk_hash,
@@ -156,7 +160,7 @@ void HotStuffCore::_blame() {
 
 #ifdef DFINITY_VC_SIM
 void HotStuffCore::on_force_new_view() {
-    LOG_WARN("force new view");
+    LOG_PROTO("force new view");
     _new_view();
 }
 void HotStuffCore::_new_view() {
@@ -291,12 +295,11 @@ void HotStuffCore::on_receive_proposal(const Proposal &prop) {
 #ifdef DFINITY_VC_SIM
     if (prop.blk->height < hqc.first->height) return;
     if (finished_propose[prop.vrf_hash]) return;
+    /* get the minimum of VRF values */
+    update_leading_proposal(prop);
 #endif
     LOG_PROTO("got %s", std::string(prop).c_str());
 #ifdef DFINITY_VC_SIM
-    /* get the minimum of VRF values */
-    update_leading_proposal(prop);
-    finished_propose[prop.vrf_hash] = true;
     if (prop.blk->height > hqc.first->height && !view_trans)
         _new_view();
 #else
@@ -400,6 +403,7 @@ void HotStuffCore::on_viewtrans_timeout() {
         _vote(prop->blk);
     else
         _process_proposal(*prop);
+    //do_clean_up_cmds(prop->blk);
     on_view_change(); // notify the PaceMaker of the view change
     LOG_INFO("entering view %d, leader is %d", view, prop->proposer);
     on_propose_(*prop);
