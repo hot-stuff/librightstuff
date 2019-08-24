@@ -633,8 +633,12 @@ void HotStuffBase::do_dfinity_gen_block() {
 void HotStuffBase::do_schedule_new_view() {
     tcall.async_call([this](salticidae::ThreadCall::Handle &) {
         HOTSTUFF_LOG_PROTO("tcall reg");
-        if (!is_view_trans())
-            pmaker->beat().then([this](ReplicaID) { on_force_new_view(); });
+        pmaker->beat().then([this](ReplicaID) {
+            if (!is_view_trans())
+                on_force_new_view();
+            //else
+            //    do_schedule_new_view();
+        });
     });
 }
 

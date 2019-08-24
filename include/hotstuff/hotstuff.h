@@ -288,6 +288,11 @@ class HotStuffBase: public HotStuffCore {
         _do_broadcast<BlameNotify, MsgBlameNotify>(bn);
     }
 
+#ifdef DFINITY_VC_SIM
+    void do_broadcast_notify(const Notify &n) override {
+        _do_broadcast<Notify, MsgNotify>(n);
+    }
+#endif
     void do_notify(const Notify &notify) override;
 
     void set_commit_timer(const block_t &blk, double t_sec) override;

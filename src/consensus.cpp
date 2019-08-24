@@ -345,7 +345,16 @@ void HotStuffCore::on_receive_vote(const Vote &vote) {
 }
 
 void HotStuffCore::on_receive_notify(const Notify &notify) {
+    LOG_PROTO("got notify of %s", get_hex10(notify.blk_hash).c_str());
     block_t blk = get_delivered_blk(notify.blk_hash);
+#ifdef DFINITY_VC_SIM
+    auto &np = notifies[blk->height];
+    if (np.first < config.nmajority)
+    {
+        if (++np.first == config.nmajority)
+            notifies[blk->height].second.resolve();
+    }
+#endif
     update_hqc(blk, notify.qc);
 }
 
@@ -408,9 +417,11 @@ void HotStuffCore::on_viewtrans_timeout() {
     LOG_INFO("entering view %d, leader is %d", view, prop->proposer);
     on_propose_(*prop);
     do_schedule_new_view();
-    // send the highest certified block
-    Notify notify(hqc.first->get_hash(), hqc.second->clone(), this);
-    do_notify(notify);
+    async_qc_finish(prop->blk).then([this]() {
+        // send the highest certified block
+        Notify notify(hqc.first->get_hash(), hqc.second->clone(), this);
+        do_broadcast_notify(notify);
+    });
 }
 #else
 // TODO: Sync HS view change code needs to be rewritten
@@ -440,6 +451,9 @@ void HotStuffCore::on_init(uint32_t nfaulty, double delta) {
     b0->self_qc = b0->qc->clone();
     b0->qc_ref = b0;
     hqc = std::make_pair(b0, b0->qc->clone());
+#ifdef DFINITY_VC_SIM
+    notifies[0].second.resolve();
+#endif
 }
 
 void HotStuffCore::prune(uint32_t staleness) {
@@ -518,6 +532,12 @@ promise_t HotStuffCore::async_wait_view_change() {
 promise_t HotStuffCore::async_wait_view_trans() {
     return view_trans_waiting;
 }
+
+#ifdef DFINITY_VC_SIM
+promise_t HotStuffCore::async_wait_majority_notify(uint32_t view) {
+    return notifies[view].second;
+}
+#endif
 
 void HotStuffCore::on_propose_(const Proposal &prop) {
     auto t = std::move(propose_waiting);

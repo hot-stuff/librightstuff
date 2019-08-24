@@ -52,6 +52,7 @@ class HotStuffCore {
     bool view_trans; /**< whether the replica is in-between the views */
 #ifdef DFINITY_VC_SIM
     std::unordered_map<uint32_t, BoxObj<Proposal>> leading_props;
+    std::unordered_map<uint32_t, std::pair<size_t, promise_t>> notifies;
 #endif
     std::unordered_map<uint32_t, std::unordered_set<block_t>> proposals;
 #ifdef DFINITY_VC_SIM
@@ -171,6 +172,9 @@ class HotStuffCore {
     virtual void do_broadcast_vote(const Vote &vote) = 0;
     virtual void do_broadcast_blame(const Blame &blame) = 0;
     virtual void do_broadcast_blamenotify(const BlameNotify &bn) = 0;
+#ifdef DFINITY_VC_SIM
+    virtual void do_broadcast_notify(const Notify &notify) = 0;
+#endif
     virtual void do_notify(const Notify &notify) = 0;
     virtual void set_commit_timer(const block_t &blk, double t_sec) = 0;
     virtual void set_blame_timer(double t_sec) = 0;
@@ -215,6 +219,9 @@ class HotStuffCore {
     promise_t async_wait_view_change();
     /** Get a promise resolved before a view change. */
     promise_t async_wait_view_trans();
+#ifdef DFINITY_VC_SIM
+    promise_t async_wait_majority_notify(uint32_t view);
+#endif
 
     /* Other useful functions */
     const block_t &get_genesis() { return b0; }
