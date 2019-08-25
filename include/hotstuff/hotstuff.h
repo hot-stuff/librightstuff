@@ -18,6 +18,7 @@
 #ifndef _HOTSTUFF_CORE_H
 #define _HOTSTUFF_CORE_H
 
+#include <deque>
 #include <queue>
 #include <unordered_map>
 #include <unordered_set>
@@ -190,7 +191,7 @@ class HotStuffBase: public HotStuffCore {
     std::unordered_map<const uint256_t, commit_cb_t> decision_waiting;
     using cmd_queue_t = salticidae::MPSCQueueEventDriven<std::pair<uint256_t, commit_cb_t>>;
     cmd_queue_t cmd_pending;
-    std::queue<uint256_t> cmd_pending_buffer;
+    std::deque<uint256_t> cmd_pending_buffer;
 #ifdef DFINITY_VC_SIM
     std::unordered_set<uint256_t> sealed_cmds;
 #endif

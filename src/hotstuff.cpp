@@ -618,17 +618,17 @@ void HotStuffBase::do_dfinity_gen_block() {
         {
             throw std::runtime_error("unreachable line");
         }
-        cmd_pending_buffer.push(cmd_hash);
+        cmd_pending_buffer.push_back(cmd_hash);
         if (cmd_pending_buffer.size() >= blk_size)
             break;
     }
     std::vector<uint256_t> cmds;
-    while (!cmd_pending_buffer.empty())
+    for (auto it = cmd_pending_buffer.begin(); it != cmd_pending_buffer.end();)
     {
-        auto &cmd_hash = cmd_pending_buffer.front();
-        if (!sealed_cmds.count(cmd_hash))
-            cmds.push_back(cmd_hash);
-        cmd_pending_buffer.pop();
+        if (sealed_cmds.count(*it))
+            it = cmd_pending_buffer.erase(it);
+        else
+            cmds.push_back(*it++);
     }
     on_propose(cmds, pmaker->get_parents());
 }
