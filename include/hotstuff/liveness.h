@@ -467,8 +467,8 @@ struct PaceMakerDfinity: public PMHighTail {
         pm_qc_finish.reject();
         //HOTSTUFF_LOG_PROTO("wait for QC of %s", get_hex10(last_proposed->get_hash()).c_str());
         (pm_qc_finish = promise::all(std::vector<promise_t>{
-                hsc->async_qc_finish(last_proposed),
-                hsc->async_wait_majority_notify(last_proposed->get_height())
+                hsc->async_qc_finish(last_proposed)//,
+                //hsc->async_wait_majority_notify(last_proposed->get_height())
             })).then([this, pm]() {
             HOTSTUFF_LOG_PROTO("resolve");
             pm.resolve(proposer);

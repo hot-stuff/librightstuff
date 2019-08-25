@@ -231,7 +231,7 @@ block_t HotStuffCore::on_propose(const std::vector<uint256_t> &cmds,
 #else
     Proposal prop(id, bnew, nullptr);
 #endif
-    LOG_PROTO("propose %s", std::string(*bnew).c_str());
+    LOG_INFO("propose %s", std::string(*bnew).c_str());
     /* self-vote */
     if (bnew->height <= vheight)
         throw std::runtime_error("new block should be higher than vheight");
@@ -432,11 +432,11 @@ void HotStuffCore::on_viewtrans_timeout() {
     LOG_INFO("entering view %d, leader is %d", view, prop->proposer);
     on_propose_(*prop);
     do_schedule_new_view();
-    async_qc_finish(prop->blk).then([this]() {
-        // send the highest certified block
-        Notify notify(hqc.first->get_hash(), hqc.second->clone(), this);
-        do_broadcast_notify(notify);
-    });
+    //async_qc_finish(prop->blk).then([this]() {
+    //    // send the highest certified block
+    //    Notify notify(hqc.first->get_hash(), hqc.second->clone(), this);
+    //    do_broadcast_notify(notify);
+    //});
 }
 #else
 // TODO: Sync HS view change code needs to be rewritten
