@@ -140,7 +140,7 @@ void HotStuffCore::_vote(const block_t &blk) {
 #endif
     do_broadcast_vote(vote);
 #ifdef DFINITY_VC_SIM
-    set_commit_timer(blk, 6 * config.delta);
+    set_commit_timer(blk, 4 * config.delta);
 #else
     set_commit_timer(blk, 2 * config.delta);
 #endif
@@ -402,8 +402,16 @@ void HotStuffCore::update_leading_proposal(const Proposal &prop) {
 
 #ifdef DFINITY_VC_SIM
 void HotStuffCore::on_viewtrans_timeout() {
+    static const uint32_t discard_info_view_delta = 100;
     // view change
     view++;
+    if (view >= discard_info_view_delta)
+    {
+        auto old_view = view - discard_info_view_delta;
+        leading_props.erase(old_view);
+        notifies.erase(old_view);
+        proposals.erase(old_view);
+    }
     view_trans = false;
     proposals.clear();
     auto prop = leading_props[view].get();

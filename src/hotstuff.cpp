@@ -609,7 +609,7 @@ void HotStuffBase::do_dfinity_gen_block() {
     while (cmd_pending.try_dequeue(e))
     {
         const auto &cmd_hash = e.first;
-        if (sealed_cmds.count(cmd_hash)) break;
+        //if (sealed_cmds.count(cmd_hash)) break;
         auto it = decision_waiting.find(cmd_hash);
         if (it == decision_waiting.end())
         {
@@ -643,8 +643,8 @@ void HotStuffBase::do_schedule_new_view() {
 }
 
 void HotStuffBase::do_clean_up_cmds(const block_t &blk) {
-    for (const auto &cmd: blk->get_cmds())
-        sealed_cmds.insert(cmd);
+    //for (const auto &cmd: blk->get_cmds())
+    //    sealed_cmds.insert(cmd);
 }
 
 #endif
