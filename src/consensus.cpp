@@ -427,7 +427,7 @@ void HotStuffCore::on_viewtrans_timeout() {
         _vote(prop->blk);
     else
         _process_proposal(*prop);
-    //do_clean_up_cmds(prop->blk);
+    do_clean_up_cmds(prop->blk);
     on_view_change(); // notify the PaceMaker of the view change
     LOG_INFO("entering view %d, leader is %d", view, prop->proposer);
     on_propose_(*prop);

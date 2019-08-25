@@ -95,7 +95,12 @@ void client_resp_cmd_handler(MsgRespCmd &&msg, const Net::conn_t &) {
     const uint256_t &cmd_hash = fin.cmd_hash;
     auto it = waiting.find(cmd_hash);
     auto &et = it->second.et;
-    if (it == waiting.end()) return;
+    if (it == waiting.end())
+    {
+        if (msg.fin.decision != 1)
+            throw std::runtime_error("no");
+        return;
+    }
     et.stop();
     if (++it->second.confirmed <= nfaulty) return; // wait for f + 1 ack
 #ifndef HOTSTUFF_ENABLE_BENCHMARK

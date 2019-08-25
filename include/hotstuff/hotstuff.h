@@ -192,7 +192,7 @@ class HotStuffBase: public HotStuffCore {
     cmd_queue_t cmd_pending;
     std::queue<uint256_t> cmd_pending_buffer;
 #ifdef DFINITY_VC_SIM
-    //std::unordered_set<uint256_t> sealed_cmds;
+    std::unordered_set<uint256_t> sealed_cmds;
 #endif
 
     /* statistics */
