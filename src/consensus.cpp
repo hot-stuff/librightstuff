@@ -215,11 +215,18 @@ block_t HotStuffCore::on_propose(const std::vector<uint256_t> &cmds,
     bnew->self_qc = create_quorum_cert(Vote::proof_obj_hash(bnew_hash));
     on_deliver_blk(bnew);
 #ifdef DFINITY_VC_SIM
+#ifdef DFINITY_FAKE_RNG
+    DataStream ds;
+    ds << id << view;
+    auto vrf_hash = ds.get_hash();
+#else
     bytearray_t rand_bytes;
     rand_bytes.resize(32);
     if (!RAND_bytes(&rand_bytes[0], rand_bytes.size()))
         throw std::runtime_error("cannot get vrf");
-    Proposal prop(id, uint256_t(rand_bytes), bnew, nullptr);
+    uint256_t vrf_hash(rand_bytes);
+#endif
+    Proposal prop(id, vrf_hash, bnew, nullptr);
     update_leading_proposal(prop);
 #else
     Proposal prop(id, bnew, nullptr);
@@ -422,7 +429,7 @@ void HotStuffCore::on_viewtrans_timeout() {
         _process_proposal(*prop);
     //do_clean_up_cmds(prop->blk);
     on_view_change(); // notify the PaceMaker of the view change
-    LOG_PROTO("entering view %d, leader is %d", view, prop->proposer);
+    LOG_INFO("entering view %d, leader is %d", view, prop->proposer);
     on_propose_(*prop);
     do_schedule_new_view();
     async_qc_finish(prop->blk).then([this]() {
