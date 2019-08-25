@@ -434,7 +434,7 @@ struct PaceMakerDfinity: public PMHighTail {
     void view_trans() {
         pm_view_trans.reject();
         pm_view_trans = hsc->async_wait_view_trans().then([this]() {
-            HOTSTUFF_LOG_INFO("dfinity pmaker view trans");
+            HOTSTUFF_LOG_PROTO("dfinity pmaker view trans");
             view_trans();
         });
     }

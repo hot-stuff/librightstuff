@@ -169,7 +169,7 @@ void HotStuffCore::_new_view() {
     do_dfinity_gen_block();
     on_view_trans();
     set_viewtrans_timer(2 * config.delta);
-    LOG_INFO("dfinity new-view waits for %.2fs", 2 * config.delta);
+    LOG_PROTO("dfinity new-view waits for %.2fs", 2 * config.delta);
 }
 #else
 // i. New-view
@@ -414,7 +414,7 @@ void HotStuffCore::on_viewtrans_timeout() {
         _process_proposal(*prop);
     //do_clean_up_cmds(prop->blk);
     on_view_change(); // notify the PaceMaker of the view change
-    LOG_INFO("entering view %d, leader is %d", view, prop->proposer);
+    LOG_PROTO("entering view %d, leader is %d", view, prop->proposer);
     on_propose_(*prop);
     do_schedule_new_view();
     async_qc_finish(prop->blk).then([this]() {
