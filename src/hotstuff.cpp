@@ -615,7 +615,9 @@ void HotStuffBase::do_dfinity_gen_block() {
             it = decision_waiting.insert(std::make_pair(cmd_hash, e.second)).first;
         }
         else
-            e.second(Finality(id, 0, 0, 0, cmd_hash, uint256_t()));
+        {
+            throw std::runtime_error("unreachable line");
+        }
         cmd_pending_buffer.push(cmd_hash);
         if (cmd_pending_buffer.size() >= blk_size)
             break;
