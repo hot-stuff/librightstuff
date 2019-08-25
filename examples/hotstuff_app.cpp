@@ -242,12 +242,14 @@ int main(int argc, char **argv) {
 
     auto parent_limit = opt_parent_limit->get();
     hotstuff::pacemaker_bt pmaker;
+#ifdef DFINITY_VC_SIM
+    pmaker = new hotstuff::PaceMakerDfinity(opt_fixed_proposer->get(), parent_limit);
+#else
     if (opt_pace_maker->get() == "dummy")
         pmaker = new hotstuff::PaceMakerDummyFixed(opt_fixed_proposer->get(), parent_limit);
-    if (opt_pace_maker->get() == "dfinity")
-        pmaker = new hotstuff::PaceMakerDfinity(opt_fixed_proposer->get(), parent_limit);
     else
         pmaker = new hotstuff::PaceMakerRR(ec, parent_limit, opt_base_timeout->get(), opt_prop_delay->get());
+#endif
 
     HotStuffApp::Net::Config repnet_config;
     ClientNetwork<opcode_t>::Config clinet_config;
